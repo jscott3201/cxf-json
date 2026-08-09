@@ -9,16 +9,16 @@ detach from Python so other threads can run.
 Proposed surface, subject to `W-008`:
 
 ```python
-document = cxf_jsonld.read(data, options=None)
+document = cxf_parser.parse_cxf(data, options=None)
 document.validation.accepted
 document.validation.diagnostics
-document.graph
 document.cxf
+document.extensions
 ```
 
-Failures that prevent graph construction raise `CxfJsonLdError`. The exception
-exposes the stable diagnostic code, stage, byte range, JSON Pointer, related
-locations, and profile. Rendering remains a convenience string.
+Failures that prevent CXF document construction raise `CxfParseError`. The
+exception exposes the stable diagnostic code, stage, byte range, JSON Pointer,
+related locations, and profile. Rendering remains a convenience string.
 
 ## Free-threading rules
 
@@ -81,14 +81,14 @@ Input buffers may be borrowed only for the duration of the Rust call. The
 returned document owns all values. This avoids pinning Python memory and makes
 detached execution safe.
 
-Returning large graphs as nested Python dictionaries can dominate parser time
-and memory. The spike should compare:
+Returning large CXF documents as nested Python dictionaries can dominate parser
+time and memory. The spike should compare:
 
 - immutable wrapper objects backed by shared Rust data;
 - materialized Python dictionaries/lists;
-- normalized JSON text for bulk interchange.
+- normalized CXF JSON text for bulk interchange.
 
-The first option gives selective access without copying the whole graph. The
+The first option gives selective access without copying the whole document. The
 third gives a stable bulk boundary. The public API may support both after
 measurement.
 

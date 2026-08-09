@@ -2,19 +2,19 @@
 
 ## Product boundary
 
-The project reads Control eXchange Format (CXF) JSON-LD and exposes the same
-semantic result to Rust, Python, browser JavaScript, and Node.js consumers.
+The project is a purpose-built Control eXchange Format (CXF) parser and exposes
+the same CXF result to Rust, Python, browser JavaScript, and Node.js consumers.
 CXF represents configured control logic after a Modelica/CDL producer has
 translated the source. Parsing Modelica or CDL text is a separate frontend and
 is not required for CXF ingestion.
 
 Primary goals:
 
-- Read valid JSON-LD from bytes without network access by default.
+- Read valid CXF JSON-LD from bytes without network access by default.
 - Preserve RDF identity, datatypes, unknown terms, and enough source location
   data to explain failures.
 - Project supported CXF terms into typed Rust structures.
-- Validate graph shape and CXF rules independently of parsing.
+- Validate CXF graph shape and semantic rules independently of syntax parsing.
 - Return equivalent results and diagnostic codes from Rust, Python, browser
   WASM, and Node WASM.
 - Use the upstream CXF corpus for compatibility tests without treating current
@@ -22,6 +22,7 @@ Primary goals:
 
 Initial non-goals:
 
+- General-purpose JSON, JSON-LD, RDF, Modelica, or CDL parsing APIs.
 - Parsing `.mo` or CDL source.
 - Executing control logic or FMUs.
 - Fetching arbitrary remote JSON-LD contexts.
@@ -58,16 +59,17 @@ Evidence:
 - [pest 2.8.8 API](https://docs.rs/pest/2.8.8/pest/)
 - [JSON-LD 1.1](https://www.w3.org/TR/json-ld11/)
 
-### D-003: JSON-LD semantics are part of compatibility
+### D-003: CXF-required JSON-LD semantics are part of compatibility
 
-The reader must not hard-code one `@context` plus `@graph` object layout.
+The CXF parser must not hard-code one `@context` plus `@graph` object layout.
 Prefixes are aliases, RDF properties may be multi-valued, ordinary JSON-LD
 arrays do not imply order, and equivalent compacted documents may serialize
 differently. Full IRIs are internal identity.
 
-The production candidate is `oxjsonld` behind an internal adapter. The
-technically capable `json-ld` stack does not meet the dependency community gate.
-`W-024` proves the minimal boundary before W-003 performs corpus-scale work.
+The parser implements only the JSON-LD operations required by the CXF profile
+and accepted producer corpus. The production candidate is `oxjsonld` behind an
+internal adapter. `W-024` proves the minimal boundary before W-003 performs
+CXF-focused corpus work.
 
 Evidence:
 
@@ -75,26 +77,27 @@ Evidence:
 - [JSON-LD processing algorithms](https://www.w3.org/TR/json-ld11-api/)
 - [JSON-LD sets and lists](https://www.w3.org/TR/json-ld11/#sets-and-lists)
 
-### D-004: source, RDF, and typed CXF are separate layers
+### D-004: source, private RDF, and typed CXF are separate layers
 
-The API must not force a choice between source fidelity and graph semantics.
-The proposed document owns:
+The parser must not force a choice between source fidelity and CXF semantics.
+The public document owns:
 
 - source bytes, metadata, and available locations;
-- normalized RDF terms and relationships;
 - a typed projection for supported CXF classes and predicates;
-- unrecognized triples and terms.
+- unrecognized terms represented as CXF extension records;
+- validation diagnostics.
 
+The private ingestion pipeline may use normalized RDF terms and relationships.
 The typed layer may diagnose an invalid CXF relation without discarding the
-parsed graph.
+source, typed values, or extension evidence.
 
 ### D-005: parsing and validation have different outcomes
 
-Malformed JSON and failed JSON-LD processing prevent graph construction. CXF
-profile violations return a document plus diagnostics. A strict policy marks
-the returned validation report rejected; it does not convert an already-built
-graph into a parse failure or hide that graph from the caller. The report
-contains the acceptance flag and the diagnostics that produced it.
+Malformed JSON and failed CXF JSON-LD processing prevent document construction.
+CXF profile violations return a document plus diagnostics. A strict policy marks
+the returned validation report rejected; it does not convert an already-parsed
+CXF document into a parse failure or discard its evidence. The report contains
+the acceptance flag and the diagnostics that produced it.
 
 ### D-006: context loading is offline by default
 
@@ -116,7 +119,7 @@ host runtime.
 
 ### D-008: bytes are the canonical boundary
 
-`parse_bytes` is the primary entry point. A string convenience API is allowed,
+`parse_cxf_bytes` is the primary entry point. A string convenience API is allowed,
 but JavaScript strings cannot preserve every input byte because unpaired UTF-16
 surrogates are replaced during conversion. Python and WASM both expose byte
 input.
@@ -129,7 +132,7 @@ Evidence:
 
 Parse options accept an optional absolute document IRI, which JSON-LD uses as
 the default base. Rust, Python, browser, and Node adapters must pass the same
-document IRI to produce equivalent graph identity.
+document IRI to produce equivalent internal term identity.
 
 JSON-LD permits relative IRI references. If RDF conversion omits a relative
 identifier because no base resolves it, the reader preserves the located JSON
@@ -143,9 +146,9 @@ Evidence:
 
 ### D-010: Rust 1.97.1 is the project toolchain
 
-W-024 will configure the workspace, local toolchain file, and CI to use Rust
-1.97.1. Direct dependencies must declare an MSRV no newer than 1.97.1. A later
-toolchain change requires a new owner ruling and target-matrix verification.
+W-024 configured the workspace, local toolchain file, and CI to use Rust 1.97.1.
+Direct dependencies must declare an MSRV no newer than 1.97.1. A later toolchain
+change requires a new owner ruling and target-matrix verification.
 
 Local verification on 2026-08-09:
 
@@ -171,8 +174,9 @@ procedure live in `DEPENDENCY-GOVERNANCE.md`.
 W-024 evaluates `serde` and `serde_json` for typed options, owned
 result/diagnostic DTOs, and ordinary JSON syntax checks. They do not provide
 JSON-LD expansion or a source-preserving tree with per-node byte spans.
-JSON-LD-to-RDF processing stays behind the guarded Oxigraph adapter. Production
-adoption waits for the W-024 lockfile, CI, license, feature, and advisory gates.
+JSON-LD-to-RDF processing stays behind the guarded Oxigraph adapter. W-024's
+lockfile, CI, license, feature, and advisory gates support private-development
+qualification under D-018; production-release adoption remains gated by W-023.
 
 ### D-013: private development, dual-licensed public release
 
@@ -222,12 +226,37 @@ publication automation and must call that policy against the release ref before
 publishing. Until W-023 implements that dependency, automated publication is out
 of scope.
 
+### D-018: qualify Serde and OxJSONLD for private development
+
+W-024 passed Rust 1.97.1 native and WASM builds, exact dependency allowlists,
+local advisory/license policy, PR CI, and clean reviews. Use `serde` and
+`serde_json` for ordinary JSON plus owned DTO boundaries during private
+development.
+
+`oxjsonld` and `oxrdf` remain isolated behind the internal adapter and are
+qualified for W-003 processor conformance work. This is not final production
+processor adoption. D-P01 remains open until W-003 supplies corpus and W3C
+evidence. Production-release dependency adoption remains gated by W-023's
+release-policy integration.
+
+### D-019: the library is a purpose-built CXF parser
+
+The public API accepts CXF files and returns typed CXF documents, extensions,
+and diagnostics. JSON syntax, JSON-LD processing, and RDF graph construction are
+private implementation stages. The library does not expose a general JSON-LD
+processor or RDF graph API.
+
+W-003 tests the JSON-LD behaviors required by CXF and the pinned producer corpus;
+it does not seek broad JSON-LD product conformance. Unknown terms remain
+available through a CXF extension view so forward compatibility does not turn
+the crate into an RDF toolkit.
+
 ## Provisional decisions
 
 These require spikes before adoption:
 
-- `D-P01`: use the guarded `oxjsonld`/`oxrdf` adapter rather than a CXF-specific
-  context subset.
+- `D-P01`: use the guarded `oxjsonld`/`oxrdf` adapter rather than hand-writing
+  CXF context expansion.
 - `D-P02`: superseded by D-014; retained bytes plus available error positions
   are the v1 contract and exact per-node spans move to W-004.
 - `D-P03`: ship one npm package with explicit browser, web, and Node subpaths.

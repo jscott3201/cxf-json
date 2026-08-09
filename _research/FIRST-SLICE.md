@@ -1,6 +1,6 @@
 # W-024: Serde/OxJSONLD ingestion boundary
 
-Status: in progress as M0-C1.
+Status: complete. PR #1 merged as `8b227a1`.
 
 ## Purpose
 
@@ -37,8 +37,8 @@ Snapshot on 2026-08-09:
 
 | Package | Release | Parent evidence | Disposition |
 |---|---:|---|---|
-| `serde` | 1.0.229 | `serde-rs/serde`: 10,759 stars, 929 forks, pushed 2026-07-25 | Approved candidate |
-| `serde_json` | 1.0.151 | `serde-rs/json`: 5,614 stars, 661 forks, pushed 2026-08-08 | Approved candidate |
+| `serde` | 1.0.229 | `serde-rs/serde`: 10,759 stars, 929 forks, pushed 2026-07-25 | Qualified for private development |
+| `serde_json` | 1.0.151 | `serde-rs/json`: 5,614 stars, 661 forks, pushed 2026-08-08 | Qualified for private development |
 | `oxjsonld` | 0.2.5 | `oxigraph/oxigraph`: 1,805 stars, 162 forks, pushed 2026-08-09 | Guarded candidate |
 | `oxrdf` | 0.3.3 | Same Oxigraph monorepo | Guarded candidate |
 | `json-ld` | 0.21.4 | Individual repository: 153 stars, concentrated contributors | Reject for production |
@@ -58,8 +58,8 @@ Oxigraph clears the age, adoption, and activity floors, but its contribution
 history is concentrated around one lead maintainer. Its types stay behind an
 internal adapter and do not become the CXF domain API.
 
-The owner approved Oxigraph for this guarded probe on 2026-08-09. Production
-adoption still depends on the lockfile, CI, license, feature, and advisory gates.
+The owner approved Oxigraph for this guarded probe on 2026-08-09. W-024
+qualifies it only for W-003; final production selection remains open.
 
 D-016 permits one below-floor direct dependency: target-specific `getrandom`
 0.3.4 with only `wasm_js`, required to enable OxRDF's existing transitive entropy
@@ -72,7 +72,8 @@ first.
 - Root workspace with resolver 2, edition 2024, and `rust-version = "1.97.1"`.
 - `rust-toolchain.toml` pinned to 1.97.1.
 - Private GitHub PR CI for native tests and the WASM compile gate; dependency
-  advisory/license installation runs locally and in the release workflow.
+  advisory/license installation runs locally and in the reusable/manual
+  release-policy workflow that W-023 must wire into publication.
 - `LICENSE-MIT`, `LICENSE-APACHE`, and Cargo metadata `MIT OR Apache-2.0`;
   repository visibility remains private.
 - One `publish = false` crate: `crates/cxf-ingest-probe`.
@@ -134,10 +135,12 @@ Required cases:
    deterministic unsupported/policy result.
 9. The evidence report records exact versions from `Cargo.lock`, feature graph,
    duplicate crates, licenses, local RustSec results, repository-health snapshot,
-   successful PR native/WASM CI, build commands, and unresolved gaps. The
-   reusable/manual release-policy workflow reruns heavy advisory and license
-   checks against an explicit ref. W-023 must make publication depend on it.
-   Only then can a candidate become an adopted production dependency.
+   successful PR native/WASM CI, build commands, and unresolved gaps. It records
+   W-023's still-open obligation to make publication depend on the reusable/manual
+   release-policy workflow.
+
+W-024 completion qualifies dependencies for continued private development. It
+does not claim production-release adoption.
 
 ## Decisions this slice can make
 
