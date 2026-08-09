@@ -1,6 +1,6 @@
 # W-024: Serde/OxJSONLD ingestion boundary
 
-Status: in progress as M0-C1.
+Status: complete. PR #1 merged as `8b227a1`.
 
 ## Purpose
 

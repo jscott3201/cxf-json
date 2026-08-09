@@ -16,12 +16,11 @@ JSON parser without handling JSON-LD expansion or CXF graph semantics. Keep
 pest on the candidate list only if a later project adds direct CDL or Modelica
 source parsing.
 
-Serde and `serde_json` are approved W-024 candidates, with production adoption
-still gated by the lockfile, CI, license, feature, and advisory evidence.
-`oxjsonld` and `oxrdf` are owner-approved only for a guarded probe behind an
-internal adapter. `json-ld` and `json-syntax` are excluded from production
-because their parent repositories do not meet the owner-established community
-threshold.
+Serde and `serde_json` are adopted by D-018 for ordinary JSON and owned DTO
+boundaries. `oxjsonld` and `oxrdf` passed W-024 native/WASM feasibility and remain
+guarded W-003 candidates behind an internal adapter, not the selected production
+processor. `json-ld` and `json-syntax` are excluded from production because their
+parent repositories do not meet the owner-established community threshold.
 
 ## Documents
 
@@ -76,12 +75,13 @@ Folder: **Modelica JSON Rust** in the Aionforge Labs workspace.
 | [MJR Defects](https://aionforgelabs.monday.com/boards/18425770675) | Observed implementation defect classes |
 | [MJR Spec](https://aionforgelabs.monday.com/boards/18425770674) | Research documents, decisions, open questions, and compatibility findings |
 
-W-024 is the first owner-ranked slice. W-003, W-004, W-005, W-008, and W-009
-retain Queue status `Queued` while remaining in the Backlog group; other planned
-work also remains in Backlog.
+W-024 was the first owner-ranked slice and is complete. W-003, W-004, W-005,
+W-008, and W-009 retain Queue status `Queued` while remaining in the Backlog
+group; other planned work also remains in Backlog.
 
 Private repository:
 [jscott3201/modelica-json-rust](https://github.com/jscott3201/modelica-json-rust).
-PR [#1](https://github.com/jscott3201/modelica-json-rust/pull/1) carries W-024.
+PR [#1](https://github.com/jscott3201/modelica-json-rust/pull/1) merged W-024 as
+`8b227a1278fade28d4157eb8ef615560b54b1a0d`.
 D-013 keeps the repository private until the stability gate is defined and met,
 then releases it under `MIT OR Apache-2.0`.

@@ -21,10 +21,10 @@ license, MSRV, feature, and advisory checks.
 
 | Crate | Version | Parent repository | Created | Stars | Forks | Last push | Archived | MSRV | Result |
 |---|---:|---|---|---:|---:|---|---|---:|---|
-| `serde` | 1.0.229 | `serde-rs/serde` | 2013-11-13 | 10,759 | 929 | 2026-07-25 | No | 1.56 | Approved candidate |
-| `serde_json` | 1.0.151 | `serde-rs/json` | 2015-05-19 | 5,614 | 661 | 2026-08-08 | No | 1.71 | Approved candidate |
-| `oxjsonld` | 0.2.5 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Guarded candidate |
-| `oxrdf` | 0.3.3 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Guarded candidate |
+| `serde` | 1.0.229 | `serde-rs/serde` | 2013-11-13 | 10,759 | 929 | 2026-07-25 | No | 1.56 | Adopted by D-018 |
+| `serde_json` | 1.0.151 | `serde-rs/json` | 2015-05-19 | 5,614 | 661 | 2026-08-08 | No | 1.71 | Adopted by D-018 |
+| `oxjsonld` | 0.2.5 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Qualified for W-003 only |
+| `oxrdf` | 0.3.3 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Qualified for W-003 only |
 | `json-ld` | 0.21.4 | `timothee-haudebourg/json-ld` | 2020-04-15 | 153 | 25 | 2026-07-02 | No | 1.83 | Reject for production |
 | `json-syntax` | 0.12.5 | `timothee-haudebourg/json-syntax` | 2022-07-01 | 6 | 5 | 2026-06-21 | No | 1.71 | Reject |
 | pest | 2.8.8 | `pest-parser/pest` | 2016-04-24 | 5,375 | 301 | 2026-08-09 | No | 1.83 | Healthy, wrong layer |
@@ -75,12 +75,12 @@ It remains research evidence only.
 
 ## Adoption outcomes
 
-- `serde` and `serde_json`: approved candidates for W-024. Final adoption occurs
-  when the committed lockfile, PR target CI, local policy checks, licenses,
-  features, and advisories pass. The release workflow reruns heavy policy checks.
-- `oxjsonld` and `oxrdf`: guarded W-024 candidates. They are not approved
-  production dependencies yet. The owner explicitly approved this guarded probe
-  on 2026-08-09 despite the contributor-concentration risk.
+- `serde` and `serde_json`: adopted by D-018 for ordinary JSON and owned DTO
+  boundaries after W-024 passed lockfile, target CI, policy, license, feature,
+  and advisory gates.
+- `oxjsonld` and `oxrdf`: qualified only for guarded W-003 evaluation. They are
+  not approved as the final production processor. The owner explicitly approved
+  this guarded path despite the contributor-concentration risk.
 - `json-ld`, `json-syntax`, and `sophia_jsonld`: must not enter the production
   dependency graph without an explicit, expiring owner exception.
 - Full `oxigraph`: out of scope; the database and RocksDB dependency surface are

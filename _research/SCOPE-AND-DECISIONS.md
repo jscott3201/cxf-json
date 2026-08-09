@@ -172,7 +172,8 @@ W-024 evaluates `serde` and `serde_json` for typed options, owned
 result/diagnostic DTOs, and ordinary JSON syntax checks. They do not provide
 JSON-LD expansion or a source-preserving tree with per-node byte spans.
 JSON-LD-to-RDF processing stays behind the guarded Oxigraph adapter. Production
-adoption waits for the W-024 lockfile, CI, license, feature, and advisory gates.
+adoption waited for the W-024 lockfile, CI, license, feature, and advisory gates;
+D-018 records the result.
 
 ### D-013: private development, dual-licensed public release
 
@@ -221,6 +222,17 @@ reusable/manual policy workflow, not on every pull request. W-023 owns release
 publication automation and must call that policy against the release ref before
 publishing. Until W-023 implements that dependency, automated publication is out
 of scope.
+
+### D-018: adopt Serde; carry OxJSONLD into W-003 only
+
+W-024 passed Rust 1.97.1 native and WASM builds, exact dependency allowlists,
+local advisory/license policy, PR CI, and clean reviews. Adopt `serde` and
+`serde_json` for ordinary JSON plus owned DTO boundaries.
+
+`oxjsonld` and `oxrdf` remain isolated behind the internal adapter and are
+qualified for W-003 processor conformance work. This is not final production
+processor adoption. D-P01 remains open until W-003 supplies corpus and W3C
+evidence.
 
 ## Provisional decisions
 

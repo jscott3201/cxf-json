@@ -9,7 +9,7 @@ unset. Monday owns status and ranking; this file owns acceptance criteria.
 |---|---|---|---|
 | W-001 | Pin upstream CXF behavior and corpus | Done | `UPSTREAM-CXF.md` identifies the source, specification, corpus, known loss, and license concern |
 | W-002 | Decide pest's role | Done | `PARSER-STRATEGY.md` records why pest is out of the CXF path and where it may fit later |
-| W-024 | Serde/OxJSONLD ingestion boundary | In Progress, M0-C1 | Rust 1.97.1 probe passes `FIRST-SLICE.md`: Serde DTO/syntax evidence, guarded OxJSONLD RDF conversion, owned fixtures, offline behavior, WASM compile, and dependency-health record |
+| W-024 | Serde/OxJSONLD ingestion boundary | Done, PR #1 | Rust 1.97.1 probe passes `FIRST-SLICE.md`: Serde DTO/syntax evidence, guarded OxJSONLD RDF conversion, owned fixtures, offline behavior, WASM compile, and dependency-health record |
 | W-003 | JSON-LD processor qualification | Queued | The dependency-approved processor runs the pinned corpus and required W3C cases on native and WASM; results include conformance, memory, time, binary size, loader control, and dependency graph |
 | W-004 | Source-fidelity contract | Queued | Determine the v1 contract for duplicates, number spelling, byte locations, JSON Pointer mapping, and graph linkage without adopting packages that fail D-011 |
 | W-005 | License and fixture-use review | Queued | Record whether upstream fixtures may be copied, transformed, or fetched in tests; retain required notices and provenance |
