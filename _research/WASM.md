@@ -17,14 +17,13 @@ later behind explicit policies.
 Proposed exports, subject to `W-009`:
 
 ```text
-read(Uint8Array | string, options?) -> Document DTO
-readJson(Uint8Array | string, options?) -> serialized Document DTO
+parseCxf(Uint8Array | string, options?) -> CXF Document DTO
+parseCxfJson(Uint8Array | string, options?) -> serialized CXF Document DTO
 ```
 
 The document DTO includes `validation.accepted` and the diagnostics that
 determined it. Strict rejection remains inspectable and does not discard the
-graph. `readJson` serializes that same envelope, including validation, rather
-than returning graph JSON alone.
+CXF document. `parseCxfJson` serializes that same envelope, including validation.
 
 `Uint8Array` is canonical. wasm-bindgen string conversion uses JavaScript
 `TextEncoder`/`TextDecoder`; unpaired UTF-16 surrogates become U+FFFD. A string
@@ -34,8 +33,8 @@ string.
 Source: [wasm-bindgen string types](https://wasm-bindgen.github.io/wasm-bindgen/reference/types/str.html).
 
 `serde-wasm-bindgen` is a candidate for structured DTOs. A JSON-string result
-may have a smaller and more predictable boundary for large graphs. Measure both
-rather than assuming native object conversion is faster.
+may have a smaller and more predictable boundary for large CXF documents.
+Measure both rather than assuming native object conversion is faster.
 
 Source: [Serde and `JsValue`](https://wasm-bindgen.github.io/wasm-bindgen/reference/arbitrary-data-with-serde.html).
 
@@ -66,7 +65,7 @@ One generated directory should not be treated as universal.
 The provisional package design is one npm package with controlled exports:
 
 ```text
-@scope/cxf-jsonld
+@scope/cxf-parser
   .        browser/bundler entry
   ./node   Node entry
   ./web    direct browser ES module entry
@@ -91,9 +90,9 @@ documents normal dependencies including `futures` and optional `reqwest`; its
 WASM fit is not established by its native docs. `oxjsonld` also needs a target
 build and size measurement.
 
-Full processing may be split from an offline CXF reader only if the spike proves
-that a processor cannot meet target or size requirements. Such a split must be
-named honestly; the reduced build cannot claim full JSON-LD semantics.
+Only the JSON-LD behavior required by CXF belongs in the product. Any fallback
+for target or size constraints remains a private CXF ingestion detail and must
+not be described as a general JSON-LD processor.
 
 ## WASM spike gate
 
@@ -101,7 +100,8 @@ named honestly; the reduced build cannot claim full JSON-LD semantics.
 
 - the core and selected processing stack build for `wasm32-unknown-unknown`;
 - wasm-pack produces the required `bundler`, `nodejs`, and `web` artifacts;
-- Node and browser tests return semantically equivalent graphs and diagnostics;
+- Node and browser tests return semantically equivalent CXF documents and
+  diagnostics;
 - byte, string, large integer, null, Unicode, and error-location boundaries have
   explicit behavior;
 - malformed input returns a structured failure without trapping or poisoning

@@ -2,14 +2,14 @@
 
 ## Recommendation
 
-Use `serde` and `serde_json` for ordinary JSON, options, and owned boundary DTOs.
-Evaluate `oxjsonld`/`oxrdf` as the JSON-LD-to-RDF path behind an internal adapter.
+Use `serde` and `serde_json` inside the CXF parser for syntax, options, and owned
+boundary DTOs. Evaluate `oxjsonld`/`oxrdf` as a private CXF ingestion stage.
 Retain original input bytes. Per-node source spans remain an open product
 requirement because the packages that provide them do not clear the dependency
 community gate.
 
-Do not write a pest grammar for JSON. Do not implement a CXF-only subset of
-JSON-LD while claiming general JSON-LD compatibility.
+Do not write a pest grammar for JSON. Implement the JSON-LD behavior CXF needs,
+test it against the relevant standard cases, and make no general JSON-LD claim.
 
 ## Decision matrix
 

@@ -5,11 +5,11 @@ project adopts a specification and decision process.
 
 ## Current verdict
 
-Build a CXF JSON-LD reader, not a Modelica source parser. The initial pipeline
-should parse JSON-LD into RDF identity, retain the original bytes and available
-error locations, project known CXF terms into typed Rust values, preserve
-unknown triples, and report syntax, JSON-LD, graph-shape, and CXF semantic
-failures as separate diagnostics.
+Build a purpose-built CXF parser, not a general JSON, JSON-LD, RDF, Modelica, or
+CDL parser. JSON-LD expansion and RDF identity are internal mechanisms required
+to interpret CXF. The public contract returns CXF values and CXF diagnostics,
+retains original bytes and available error locations, and preserves unknown CXF
+extension terms without exposing a general RDF toolkit.
 
 Do not use pest for the CXF input. A PEG grammar would replace an established
 JSON parser without handling JSON-LD expansion or CXF graph semantics. Keep

@@ -5,14 +5,12 @@ their state; answers and evidence belong here or in a decision record.
 
 ## Format and conformance
 
-### OQ-001: What does "full JSON-LD support" mean for v1?
+### OQ-001: What does "full JSON-LD support" mean for v1? (resolved)
 
-Candidate boundary: expansion and RDF conversion are required; compaction,
-flattening, serialization, framing, named graphs, and generalized RDF need an
-explicit support decision. The observed `json-ld` API does not document framing.
-
-Cleared by: `W-003` plus an adopted operation matrix against the
-[JSON-LD 1.1 API](https://www.w3.org/TR/json-ld11-api/).
+Resolved by D-019: the project does not offer full general-purpose JSON-LD
+support. It implements and tests the JSON-LD operations needed to parse CXF and
+the accepted producer corpus. W-003 records that CXF-specific operation matrix
+against the [JSON-LD 1.1 API](https://www.w3.org/TR/json-ld11-api/).
 
 ### OQ-002: Which CXF authority defines the first strict profile?
 
@@ -54,13 +52,11 @@ Cleared by: an interoperability requirement and a validated shape source.
 
 ## API and targets
 
-### OQ-006: Is a graph API, typed CXF API, or both public?
+### OQ-006: Is a graph API, typed CXF API, or both public? (resolved)
 
-The architecture supports both, but exposing both increases stability
-obligations. Unknown triples need some public path even if most users consume
-typed CXF values.
-
-Cleared by: two representative consumer sketches and API review after `W-013`.
+Resolved by D-019: the public API is typed CXF plus a CXF extension view. RDF
+graph and JSON-LD processor types remain internal. W-013 still owns the concrete
+typed API design.
 
 ### OQ-007: Are remote contexts ever enabled by library-provided loaders?
 

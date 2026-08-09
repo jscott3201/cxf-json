@@ -4,17 +4,16 @@
 
 ```text
 crates/
-  cxf-types/       owned RDF/CXF values, source locations, diagnostics
+  cxf-types/       owned CXF values, extensions, source locations, diagnostics
   cxf-reader/      bytes -> JSON -> JSON-LD -> graph -> typed projection
   cxf-validation/  versioned CXF profile rules
   cxf-python/      PyO3 extension module
   cxf-wasm/        wasm-bindgen browser and Node adapter
 ```
 
-If processor dependencies make the base reader too large or fail WASM, split
-full JSON-LD expansion into `cxf-jsonld-processing`. Do not make that split
-until `W-003` has measurements; crate boundaries should follow an observed
-dependency or release boundary.
+JSON-LD and RDF dependencies remain private to the reader. If they require a
+crate boundary after W-003, use an internal processing crate that is not exposed
+as a general JSON-LD product.
 
 W-024 precedes this public workspace shape with one `publish = false`
 `cxf-ingest-probe` crate. It may prove boundaries but does not establish public
@@ -35,38 +34,37 @@ Sources:
 bytes
   -> input policy and UTF-8 check
   -> retained source plus Serde syntax/DTO boundary
-  -> guarded OxJSONLD context processing and RDF conversion
-  -> graph indexes by full IRI
+  -> private OxJSONLD context processing and RDF conversion
+  -> private graph indexes by full IRI
   -> typed CXF projection plus preserved unknown triples
   -> versioned profile diagnostics
   -> Rust / Python / JavaScript DTO conversion
 ```
 
-Parsing, projection, and validation must be callable separately. Consumers that
-need forensic access can inspect a graph that failed CXF validation. A strict
-gate marks the validation report rejected without changing parse success or
-discarding the graph.
+Parsing, projection, and validation remain separately testable internal stages.
+Consumers receive a CXF document plus diagnostics, including when profile
+validation rejects it. A strict gate marks the validation report rejected
+without discarding the parsed CXF evidence.
 
 ## Core contract sketch
 
 This is illustrative, not a committed API.
 
 ```rust
-pub fn parse_bytes(
+pub fn parse_cxf_bytes(
     input: &[u8],
     options: &ParseOptions,
 ) -> Result<ParsedDocument, ParseFailure>;
 
 pub struct ParsedDocument {
     pub source: SourceDocument,
-    pub graph: Graph,
     pub cxf: CxfProjection,
     pub validation: ValidationReport,
 }
 ```
 
-`ParseFailure` is limited to failures that prevent graph construction, such as
-input limits, invalid UTF-8, malformed JSON, or failed JSON-LD processing.
+`ParseFailure` is limited to failures that prevent CXF document construction,
+such as input limits, invalid UTF-8, malformed JSON, or failed JSON-LD processing.
 `ValidationReport` contains an acceptance flag and diagnostics. Profile policy
 determines the flag, so strict rejection is observable without losing the
 document.
@@ -79,13 +77,12 @@ turning valid JSON-LD into a parse failure.
 
 The public contract needs these invariants:
 
-- no borrowed input escapes `parse_bytes`;
-- full IRIs identify RDF terms;
+- no borrowed input escapes `parse_cxf_bytes`;
+- full IRIs identify terms inside the private graph stage;
 - source bytes are retained; reported locations use byte offsets when the
   approved parser exposes them;
-- unknown triples survive projection;
+- unknown terms survive in the CXF extension view;
 - diagnostic codes are stable within a major release;
-- graph iteration order is not semantic order;
 - public methods do not panic on user input.
 
 ## Identity and extensions
@@ -95,9 +92,9 @@ project both to one known CXF role while retaining the original term and a
 compatibility diagnostic. This prevents normalization from fabricating RDF
 equivalence.
 
-Unknown classes, predicates, and values remain queryable. A closed Rust enum
-may represent known CXF roles, but every node also needs access to its original
-RDF terms.
+Unknown classes, predicates, and values remain queryable through CXF extension
+records. A closed Rust enum may represent known CXF roles, while extension
+records retain original RDF terms without exposing a general graph API.
 
 ## Loader boundary
 
@@ -129,7 +126,7 @@ node canonicalization algorithm.
 
 Python and JavaScript DTO serialization must define integer, decimal, IRI,
 binary source, optional-field, and validation-report behavior explicitly. A
-bulk JSON form serializes the whole document envelope, not the graph alone.
+bulk JSON form serializes the whole CXF document envelope.
 Boundary equivalence is covered by `W-010`.
 
 ## Panic and failure boundary
