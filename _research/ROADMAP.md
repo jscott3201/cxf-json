@@ -74,7 +74,7 @@ public environments.
 | R-002 | Specification, vocabulary, and emitter disagree | Preserve full IRI identity; diagnose profile aliases; never normalize silently |
 | R-003 | Upstream output loses enum order and connection graphics | Expose the loss; do not promise reconstruction |
 | R-004 | Remote contexts create SSRF, drift, and availability risk | Offline default; bounded caller-supplied loader only |
-| R-005 | CXF's JSON-LD processing later fails WASM or size targets | W-003 passed the current stack; preserve D-020/D-021 boundaries and rerun qualification if the processor changes |
+| R-005 | Deployable CXF WASM exceeds W-009 runtime or package-size targets | W-003 passed core Node/WASM feasibility; W-009 owns browser/package gates and must preserve D-020/D-021 |
 | R-006 | Python free-threading exposes hidden mutable state | Immutable documents, explicit synchronization, CPython 3.14t concurrency tests |
 | R-007 | Host DTO conversion dominates parse time and memory | Benchmark wrappers, structured objects, and JSON bulk transfer |
 | R-008 | Fixture licensing is misread from package metadata | Review literal upstream license and required notices before copying corpus |
