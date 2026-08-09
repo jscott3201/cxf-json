@@ -23,8 +23,8 @@ license, MSRV, feature, and advisory checks.
 |---|---:|---|---|---:|---:|---|---|---:|---|
 | `serde` | 1.0.229 | `serde-rs/serde` | 2013-11-13 | 10,759 | 929 | 2026-07-25 | No | 1.56 | Qualified for private development |
 | `serde_json` | 1.0.151 | `serde-rs/json` | 2015-05-19 | 5,614 | 661 | 2026-08-08 | No | 1.71 | Qualified for private development |
-| `oxjsonld` | 0.2.5 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Qualified for W-003 only |
-| `oxrdf` | 0.3.3 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Qualified for W-003 only |
+| `oxjsonld` | 0.2.5 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Private development under D-022 |
+| `oxrdf` | 0.3.3 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Private development under D-022 |
 | `json-ld` | 0.21.4 | `timothee-haudebourg/json-ld` | 2020-04-15 | 153 | 25 | 2026-07-02 | No | 1.83 | Reject for production |
 | `json-syntax` | 0.12.5 | `timothee-haudebourg/json-syntax` | 2022-07-01 | 6 | 5 | 2026-06-21 | No | 1.71 | Reject |
 | pest | 2.8.8 | `pest-parser/pest` | 2016-04-24 | 5,375 | 301 | 2026-08-09 | No | 1.83 | Healthy, wrong layer |
@@ -79,9 +79,9 @@ It remains research evidence only.
   ordinary JSON and owned DTO boundaries after W-024 passed lockfile, target CI,
   local policy, license, feature, and advisory gates. Production-release adoption
   remains gated by W-023's release-policy integration.
-- `oxjsonld` and `oxrdf`: qualified only for guarded W-003 evaluation. They are
-  not approved as the final production processor. The owner explicitly approved
-  this guarded path despite the contributor-concentration risk.
+- `oxjsonld` and `oxrdf`: qualified by D-022 for private CXF ingestion behind the
+  internal adapter. They are not approved for production release; W-023 retains
+  that gate. Contributor concentration remains R-011.
 - `json-ld`, `json-syntax`, and `sophia_jsonld`: must not enter the production
   dependency graph without an explicit, expiring owner exception.
 - Full `oxigraph`: out of scope; the database and RocksDB dependency surface are

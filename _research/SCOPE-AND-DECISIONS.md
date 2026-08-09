@@ -235,9 +235,8 @@ local advisory/license policy, PR CI, and clean reviews. Use `serde` and
 development.
 
 `oxjsonld` and `oxrdf` remain isolated behind the internal adapter and are
-qualified for W-003 processor conformance work. This is not final production
-processor adoption. D-P01 remains open until W-003 supplies its CXF operation
-matrix and corpus evidence. Production-release dependency adoption remains
+qualified for private-development CXF ingestion under D-022. This is not final
+production processor adoption. Production-release dependency adoption remains
 gated by W-023's release-policy integration.
 
 ### D-019: the library is a purpose-built CXF parser
@@ -275,12 +274,25 @@ reusable release policy fail while either the resolved direct dependency or its
 D-021 marker remains. Workspace inheritance and package aliases do not bypass
 the check; deleting the marker alone does not clear it.
 
+### D-022: qualify guarded OxJSONLD/OxRDF for private CXF ingestion
+
+W-003 passed the owned CXF operation matrix, the Git-pinned read-only Open
+Control Engine corpus, native and Node-executed WASM tests, resource observation,
+dependency policy, PR CI, and independent review. Keep `oxjsonld` and `oxrdf`
+behind the private CXF adapter for term identity, datatypes, language tags, and
+set relationships during private development.
+
+This decision does not expose RDF types, derive CXF array order from RDF, enable
+remote loading, or approve a production release. D-020 governs ordered
+projection, D-021 governs the temporary WASM entropy exception, and W-023 still
+gates production-release dependency adoption.
+
 ## Provisional decisions
 
 These require spikes before adoption:
 
-- `D-P01`: use the guarded `oxjsonld`/`oxrdf` adapter rather than hand-writing
-  CXF context expansion.
+- `D-P01`: superseded by D-022; use the guarded adapter for private CXF
+  ingestion, subject to D-020, D-021, and W-023.
 - `D-P02`: superseded by D-014; retained bytes plus available error positions
   are the v1 contract and exact per-node spans move to W-004.
 - `D-P03`: ship one npm package with explicit browser, web, and Node subpaths.
