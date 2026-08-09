@@ -1,8 +1,9 @@
 name: Release policy
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
+  workflow_call:
   workflow_dispatch:
 
 permissions:

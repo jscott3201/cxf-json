@@ -217,8 +217,8 @@ feature unification; otherwise renewal requires another owner ruling.
 Pull requests run formatting, Clippy, native tests for both feature sets, WASM
 builds for both feature sets, and exact versioned WASM dependency allowlists.
 Dependency advisory and license tools run locally during development and in a
-release/manual workflow, not on every pull request. Release publication must not
-proceed when that policy workflow fails.
+release-tag, reusable, or manually dispatched workflow, not on every pull request.
+Release publication must not proceed when that policy workflow fails.
 
 ## Provisional decisions
 
