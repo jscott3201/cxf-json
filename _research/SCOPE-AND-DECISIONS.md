@@ -171,9 +171,9 @@ procedure live in `DEPENDENCY-GOVERNANCE.md`.
 W-024 evaluates `serde` and `serde_json` for typed options, owned
 result/diagnostic DTOs, and ordinary JSON syntax checks. They do not provide
 JSON-LD expansion or a source-preserving tree with per-node byte spans.
-JSON-LD-to-RDF processing stays behind the guarded Oxigraph adapter. Production
-adoption waited for the W-024 lockfile, CI, license, feature, and advisory gates;
-D-018 records the result.
+JSON-LD-to-RDF processing stays behind the guarded Oxigraph adapter. W-024's
+lockfile, CI, license, feature, and advisory gates support private-development
+qualification under D-018; production-release adoption remains gated by W-023.
 
 ### D-013: private development, dual-licensed public release
 

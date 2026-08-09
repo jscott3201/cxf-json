@@ -72,7 +72,8 @@ first.
 - Root workspace with resolver 2, edition 2024, and `rust-version = "1.97.1"`.
 - `rust-toolchain.toml` pinned to 1.97.1.
 - Private GitHub PR CI for native tests and the WASM compile gate; dependency
-  advisory/license installation runs locally and in the release workflow.
+  advisory/license installation runs locally and in the reusable/manual
+  release-policy workflow that W-023 must wire into publication.
 - `LICENSE-MIT`, `LICENSE-APACHE`, and Cargo metadata `MIT OR Apache-2.0`;
   repository visibility remains private.
 - One `publish = false` crate: `crates/cxf-ingest-probe`.
