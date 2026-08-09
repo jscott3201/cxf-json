@@ -1,7 +1,6 @@
 # W-004: Source-fidelity contract
 
-Status: implementation complete on `w004-source-fidelity`; PR creation, review,
-and merge are pending.
+Status: complete. PR #5 merged as `268b361`.
 
 ## Purpose
 
