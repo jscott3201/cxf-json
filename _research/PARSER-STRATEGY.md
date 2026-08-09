@@ -110,6 +110,10 @@ types, values, units, arrays, expressions, graphics, and FMU references. Keep
 unknown terms in the private graph and project them into CXF extension records.
 Do not expose processor or RDF graph types.
 
+Project order-sensitive CXF fields from the retained ordered source/DTO layer.
+W-003 proves that ordinary JSON-LD array order is absent from the RDF result;
+graph iteration order must not define CXF ordering.
+
 ### 5. Profile validation
 
 Run versioned rules after graph construction:

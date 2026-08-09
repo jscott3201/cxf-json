@@ -33,10 +33,11 @@ Sources:
 ```text
 bytes
   -> input policy and UTF-8 check
-  -> retained source plus Serde syntax/DTO boundary
+  -> retained source plus ordered Serde CXF syntax/DTO boundary
   -> private OxJSONLD context processing and RDF conversion
   -> private graph indexes by full IRI
-  -> typed CXF projection plus CXF extension records
+  -> typed CXF projection joining source order with RDF identity
+  -> CXF extension records
   -> versioned profile diagnostics
   -> Rust / Python / JavaScript DTO conversion
 ```
@@ -83,6 +84,7 @@ The public contract needs these invariants:
 - source bytes are retained; reported locations use byte offsets when the
   approved parser exposes them;
 - unknown terms survive in the CXF extension view;
+- CXF array order comes from the ordered source/DTO layer, never RDF iteration;
 - diagnostic codes are stable within a major release;
 - public methods do not panic on user input.
 

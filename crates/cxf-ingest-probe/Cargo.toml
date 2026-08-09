@@ -17,4 +17,12 @@ serde.workspace = true
 serde_json.workspace = true
 
 [target.wasm32-unknown-unknown.dependencies]
-getrandom = { version = "0.3.4", features = ["wasm_js"], optional = true }
+getrandom = { version = "=0.3.4", features = ["wasm_js"], optional = true }
+
+[[example]]
+name = "qualify_cxf_corpus"
+required-features = ["oxigraph"]
+
+[[example]]
+name = "wasm_cxf_smoke"
+required-features = ["oxigraph"]

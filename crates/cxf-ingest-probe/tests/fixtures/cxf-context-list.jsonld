@@ -1,0 +1,18 @@
+{
+  "@context": [
+    {
+      "S231": "https://obsolete.example/S231#",
+      "ex": "https://example.test/context#"
+    },
+    {
+      "S231": "http://data.ashrae.org/S231P#"
+    }
+  ],
+  "@graph": [
+    {
+      "@id": "ex:Root",
+      "@type": "S231:Block",
+      "S231:label": "context-order"
+    }
+  ]
+}

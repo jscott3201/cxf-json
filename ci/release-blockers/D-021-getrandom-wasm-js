@@ -1,0 +1,2 @@
+D-021 blocks public release while the below-floor target-only getrandom
+dependency remains. W-009 must remove it or record a new owner ruling.

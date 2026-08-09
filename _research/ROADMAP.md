@@ -10,7 +10,7 @@ unset. Monday owns status and ranking; this file owns acceptance criteria.
 | W-001 | Pin upstream CXF behavior and corpus | Done | `UPSTREAM-CXF.md` identifies the source, specification, corpus, known loss, and license concern |
 | W-002 | Decide pest's role | Done | `PARSER-STRATEGY.md` records why pest is out of the CXF path and where it may fit later |
 | W-024 | Serde/OxJSONLD ingestion boundary | Done, PR #1 | Rust 1.97.1 probe passes `FIRST-SLICE.md`: Serde DTO/syntax evidence, guarded OxJSONLD RDF conversion, owned fixtures, offline behavior, WASM compile, and dependency-health record |
-| W-003 | CXF JSON-LD ingestion qualification | Queued | The guarded processor runs the pinned CXF corpus and only the W3C cases needed by CXF on native and WASM; results include profile coverage, memory, time, binary size, loader control, and dependency graph |
+| W-003 | CXF JSON-LD ingestion qualification | In progress | Owned CXF operation tests pass natively and in Node-executed WASM; a read-only Open Control Engine run covers 162 local and 44 vendored files; PR CI/review remains |
 | W-004 | Source-fidelity contract | Queued | Determine the v1 contract for duplicates, number spelling, byte locations, JSON Pointer mapping, and graph linkage without adopting packages that fail D-011 |
 | W-005 | License and fixture-use review | Queued | Record whether upstream fixtures may be copied, transformed, or fetched in tests; retain required notices and provenance |
 
@@ -22,8 +22,8 @@ dependency-approved processor passes native plus WASM.
 
 | ID | Work item | State | Exit condition |
 |---|---|---|---|
-| W-006 | Workspace and core API scaffold | Planned | Native and WASM builds expose owned CXF input, document, extension, source-location, and diagnostic types without host dependencies or public RDF types |
-| W-007 | CXF semantic ingestion | Planned | Focused and Buildings CXF fixtures produce typed CXF evidence through private RDF terms with full IRI identity, datatypes, language tags, and bounded offline context behavior |
+| W-006 | Workspace and core API scaffold | Planned | Native and WASM builds expose ordered CXF input, document, extension, source-location, and diagnostic types without host dependencies or public RDF types |
+| W-007 | CXF semantic ingestion | Planned | Focused and Buildings CXF fixtures join ordered source/DTO fields with private RDF identity, datatypes, language tags, and bounded offline context behavior |
 | W-010 | Boundary equivalence corpus | Planned | Rust, Python, browser, and Node agree on bytes, Unicode, numbers, nulls, maps, and error locations |
 | W-011 | Resource limits and fuzz harness | Planned | Limits are enforced; fuzz targets find no panic, hang, uncontrolled allocation, or network access |
 | W-012 | Blank-node canonical comparison | Planned | Full `CXF-Core.jsonld` equality is stable across processors and serializer-assigned blank-node labels |
@@ -49,7 +49,7 @@ failures, and no compatibility alias changes internal term identity silently.
 | ID | Work item | State | Exit condition |
 |---|---|---|---|
 | W-008 | PyO3 0.29.2 free-threading spike | Queued | GIL and CPython 3.14t builds pass concurrent tests, detach long work, and produce installable wheels with structured exceptions |
-| W-009 | wasm-bindgen/wasm-pack spike | Queued | Browser, bundler, and Node packages install and pass semantic parity, malformed-input, size, and memory gates |
+| W-009 | wasm-bindgen/wasm-pack spike | Queued | Browser, bundler, and Node packages install and pass semantic parity, malformed-input, size, and memory gates; remove or re-rule D-021 and its release blocker |
 | W-018 | Python public API | Planned | Owned wrappers and bulk serialization have measured copy costs and stable exception fields |
 | W-019 | npm public API | Planned | Export map, TypeScript declarations, byte/string behavior, and error contract pass package-consumer tests |
 
@@ -81,3 +81,4 @@ public environments.
 | R-009 | Blank-node labels make semantic tests flaky | Use dataset canonicalization, not raw labels or JSON order |
 | R-010 | Scope expands into Modelica source parsing | Keep `.mo` input outside M0-M4; create a separate decision and frontend if requested |
 | R-011 | Rust JSON-LD packages have limited community breadth | Reject packages below D-011; isolate guarded Oxigraph types and recheck health on dependency updates |
+| R-012 | RDF conversion erases CXF array order | Retain ordered CXF source/DTO values; use RDF only for identity and set relationships under D-020 |
