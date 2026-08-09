@@ -28,13 +28,17 @@ Semantic round-trip and byte-for-byte round-trip are different contracts. The
 latter requires retention of formatting, key order, number spelling, and likely
 the original bytes. JSON-LD normalization cannot provide it by itself.
 
-Resolved by D-014: no. V1 retains exact accepted bytes and parser error
-positions; it does not promise per-node spans or byte-for-byte reserialization.
-W-004 owns any later source mapper.
+Resolved by D-014: no. After input-size admission, v1 retains exact submitted
+bytes and parser error positions; it does not promise per-node spans or
+byte-for-byte reserialization. W-004 operationalizes this as submitted-byte
+retention, strict duplicate-name rejection, byte detection positions, and no
+source mapper.
 
 No approved dependency currently provides a full per-node source map. The
 technically suitable `json-syntax` crate fails D-011. W-024 verifies the
 raw-bytes and error-position mechanics but does not reopen the D-014 contract.
+Any later source-aware editor or rewrite feature requires a separate work item
+and dependency ruling.
 
 ### OQ-004: Which legacy namespaces are supported?
 

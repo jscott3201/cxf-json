@@ -42,4 +42,37 @@ fn main() {
         remote.diagnostic.message,
         "No LoadDocumentCallback has been set to load remote contexts"
     );
+
+    let duplicate = br#"{"@context":{},"@id":"first","@id":"second"}"#;
+    let failure = parse_json_ld(duplicate).expect_err("duplicates should fail before JSON-LD");
+    assert_eq!(failure.source.as_bytes(), duplicate);
+    assert_eq!(failure.diagnostic.stage, DiagnosticStage::Json);
+    assert!(
+        failure
+            .diagnostic
+            .message
+            .contains("duplicate object member")
+    );
+    assert_eq!(failure.diagnostic.pointer, None);
+    assert_eq!(failure.diagnostic.rdf_term, None);
+
+    let large_number = br#"{
+      "@context": {"value": "https://example.test/value"},
+      "@id": "https://example.test/subject",
+      "value": 1e400
+    }"#;
+    let numeric = parse_json_ld(large_number).expect("large exponent should reach JSON-LD");
+    assert!(numeric.quads.iter().any(|quad| {
+        matches!(
+            &quad.object,
+            RdfObjectSummary::Literal { value, .. } if value == "1.0E400"
+        )
+    }));
+
+    let depth = 256;
+    let mut nested = vec![b'['; depth];
+    nested.extend_from_slice(b"{}");
+    nested.extend(std::iter::repeat_n(b']', depth));
+    let nested = parse_json_ld(&nested).expect("nesting policy belongs to W-011");
+    assert!(nested.quads.is_empty());
 }

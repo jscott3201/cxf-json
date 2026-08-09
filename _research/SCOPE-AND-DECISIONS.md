@@ -134,9 +134,9 @@ the default base. Rust, Python, browser, and Node adapters must pass the same
 document IRI to produce equivalent internal term identity.
 
 JSON-LD permits relative IRI references. If RDF conversion omits a relative
-identifier because no base resolves it, the reader preserves the located JSON
-value and records the loss in the returned report. This is not a JSON syntax or
-JSON-LD processing failure.
+identifier because no base resolves it, the reader preserves the submitted
+source and any JSON Pointer known by project traversal, then records the loss in
+the returned report. This is not a JSON syntax or JSON-LD processing failure.
 
 Evidence:
 
@@ -185,12 +185,14 @@ OR Apache-2.0` with both license texts in the repository. Changing visibility is
 a separate owner-approved release action, not an automatic consequence of a
 version number.
 
-### D-014: v1 retains source bytes, not per-node spans
+### D-014: v1 retains submitted bytes, not per-node spans
 
-The v1 source-fidelity contract retains the exact accepted input bytes and the
-parser's available error positions. It does not promise a byte span for every
-successful JSON or RDF node. W-004 owns any later project-built source mapper.
-No package that fails D-011 may be added to obtain per-node spans.
+After input-size admission, the v1 source-fidelity contract retains the exact
+submitted input bytes and the parser's available error positions. This applies
+to successful documents and failures. W-011 must reject oversized input before
+making an owned copy. The contract does not promise a byte span for every
+successful JSON or RDF node. No package that fails D-011 may be added to obtain
+per-node spans. D-023 records the executable W-004 contract.
 
 ### D-015: public release preserves audited private history
 
@@ -285,14 +287,32 @@ remote loading, or approve a production release. D-020 governs ordered
 projection, D-021 governs the temporary WASM entropy exception, and W-023 still
 gates production-release dependency adoption.
 
+### D-023: reject duplicate JSON names and keep source evidence independent
+
+W-004 makes zero-based byte offsets authoritative for parser detection
+locations. Line and byte-column values are derived from the retained submitted
+bytes. Ranges are half-open; point diagnostics have equal start and end. Exact
+number spelling remains available only in the submitted document. Invalid UTF-8
+is checked first and points to its first invalid byte.
+
+Reject duplicate decoded object member names before JSON-LD processing. Do not
+expose last-wins Serde or processor behavior as CXF semantics. JSON Pointers are
+optional syntax paths emitted only when project traversal knows an unambiguous
+path. Optional RDF terms are independent semantic evidence. Neither field
+creates pointer-to-quad, span-to-term, or blank-node provenance.
+
+V1 does not add a source mapper. A later source-aware editor or rewrite feature
+requires its own work item and dependency ruling.
+
 ## Provisional decisions
 
-These require spikes before adoption:
+The remaining proposals require spikes before adoption. Superseded entries stay
+in this list as decision history.
 
 - `D-P01`: superseded by D-022; use the guarded adapter for private CXF
   ingestion, subject to D-020, D-021, and W-023.
-- `D-P02`: superseded by D-014; retained bytes plus available error positions
-  are the v1 contract and exact per-node spans move to W-004.
+- `D-P02`: superseded by D-014 and D-023; retained submitted bytes plus
+  available parser positions are the v1 contract, with no per-node mapper.
 - `D-P03`: ship one npm package with explicit browser, web, and Node subpaths.
 - `D-P04`: target ordinary CPython plus version-specific CPython 3.14t wheels;
   consider `abi3t` when Python 3.15 is in the supported matrix.

@@ -5,8 +5,8 @@
 Use `serde` and `serde_json` inside the CXF parser for syntax, options, and owned
 boundary DTOs. D-022 permits `oxjsonld`/`oxrdf` as a private CXF ingestion stage.
 Retain original input bytes. Per-node source spans remain an open product
-requirement because the packages that provide them do not clear the dependency
-community gate.
+feature outside v1 because the packages that provide them do not clear the
+dependency community gate. D-023 defines the bounded source contract.
 
 Do not write a pest grammar for JSON. Implement the JSON-LD behavior CXF needs,
 test it against the relevant standard cases, and make no general JSON-LD claim.
@@ -84,16 +84,25 @@ Check configured byte limits before allocation-heavy processing. The byte API
 must reject invalid UTF-8 with a source offset. The string API starts after
 host-language conversion and cannot make byte-fidelity claims.
 
-### 2. JSON syntax and source map
+### 2. JSON syntax and source evidence
 
-Retain the original input bytes. Use Serde to characterize duplicate-member and
-number behavior before choosing a public source-fidelity contract. JSON-LD
-object names must be unique; the reader must not silently present last-wins data
-as source-faithful.
+Retain the submitted input bytes on success and failure after input-size
+admission. A project-owned lexical preflight rejects repeated decoded member
+names before ordinary JSON or JSON-LD processing. It uses `serde_json` to decode
+individual strings, builds no AST, and adds no package. The reader never presents
+last-wins data as CXF semantics.
 
 Do not route every number through `f64`. Exact number spelling remains available
-in retained source bytes; W-024 records what `serde_json` and `oxjsonld` preserve
-through their semantic representations.
+only in retained source bytes; W-024 and W-004 record what `serde_json` and
+`oxjsonld` preserve through their semantic representations. Parser locations
+use byte offsets and byte columns. Optional JSON Pointers and RDF terms are
+independent evidence, not a source-to-graph map.
+
+The preflight validates number grammar without numeric conversion, so a large
+JSON number accepted by OxJSONLD is not rejected merely to inspect object names.
+Ordinary `serde_json::Value` behavior is unchanged and remains a semantic view.
+W-011 owns the final explicit nesting limit; the iterative preflight itself adds
+none.
 
 ### 3. JSON-LD processing
 

@@ -74,15 +74,17 @@ document.
 `ParseOptions` includes an optional absolute document IRI. JSON-LD uses it as
 the default base for relative identifiers. Every host adapter exposes the same
 option. If RDF conversion omits an unresolved relative IRI, the reader preserves
-its located JSON value and records a conversion-loss diagnostic rather than
-turning valid JSON-LD into a parse failure.
+the source bytes and, when project traversal knows one, its JSON Pointer. It
+records a conversion-loss diagnostic rather than turning valid JSON-LD into a
+parse failure.
 
 The public contract needs these invariants:
 
 - no borrowed input escapes `parse_cxf_bytes`;
 - full IRIs identify terms inside the private graph stage;
-- source bytes are retained; reported locations use byte offsets when the
-  approved parser exposes them;
+- after input-size admission, submitted bytes are retained on success and
+  failure; reported parser locations use zero-based byte offsets and byte
+  columns;
 - unknown terms survive in the CXF extension view;
 - CXF array order comes from the ordered source/DTO layer, never RDF iteration;
 - diagnostic codes are stable within a major release;

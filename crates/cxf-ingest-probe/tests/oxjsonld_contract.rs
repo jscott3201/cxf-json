@@ -103,10 +103,12 @@ fn rejects_remote_context_without_network_loader() {
     assert_eq!(failure.diagnostic.stage, DiagnosticStage::JsonLd);
     assert!(failure.diagnostic.message.contains("remote context"));
     assert!(failure.diagnostic.range.is_none());
+    assert_eq!(failure.diagnostic.pointer, None);
+    assert_eq!(failure.diagnostic.rdf_term, None);
 }
 
 #[test]
-fn json_syntax_error_retains_oxjsonld_byte_position() {
+fn json_syntax_error_is_rejected_before_json_ld_processing() {
     let input = b"{\n  @\n}";
     let failure = parse_json_ld(input).expect_err("input is malformed");
     let range = failure
@@ -115,8 +117,79 @@ fn json_syntax_error_retains_oxjsonld_byte_position() {
         .expect("JSON syntax error should carry a position");
 
     assert_eq!(failure.source.as_bytes(), input);
-    assert_eq!(failure.diagnostic.stage, DiagnosticStage::JsonLd);
+    assert_eq!(failure.diagnostic.stage, DiagnosticStage::Json);
     assert_eq!(range.start.offset, 4);
     assert_eq!(range.start.line, 1);
     assert_eq!(range.start.column, 2);
+}
+
+#[test]
+fn rejects_duplicate_members_before_json_ld_processing() {
+    let input = br#"{
+        "@context": {"label": "https://example.test/first", "label": "https://example.test/second"},
+        "label": "value"
+    }"#;
+    let failure = parse_json_ld(input).expect_err("duplicate context term must be rejected");
+
+    assert_eq!(failure.source.as_bytes(), input);
+    assert_eq!(failure.diagnostic.stage, DiagnosticStage::Json);
+    assert!(
+        failure
+            .diagnostic
+            .message
+            .contains("duplicate object member")
+    );
+    assert_eq!(failure.diagnostic.pointer, None);
+    assert_eq!(failure.diagnostic.rdf_term, None);
+}
+
+#[test]
+fn rejects_invalid_surrogate_escape_before_json_ld_processing() {
+    let input = br#"{
+        "@context": {"value": "https://example.test/value"},
+        "value": "\uDEAD"
+    }"#;
+    let failure = parse_json_ld(input).expect_err("invalid surrogate must fail JSON syntax");
+
+    assert_eq!(failure.source.as_bytes(), input);
+    assert_eq!(failure.diagnostic.stage, DiagnosticStage::Json);
+    assert!(failure.diagnostic.range.is_some());
+}
+
+#[test]
+fn number_spelling_remains_only_in_submitted_bytes() {
+    let input = br#"{
+        "@context": {"value": "https://example.test/value"},
+        "@id": "https://example.test/subject",
+        "value": [1, 1.0, 1e+02, -0, 1e400]
+    }"#;
+    let report = parse_json_ld(input).expect("numeric JSON-LD should parse");
+
+    assert_eq!(report.source.as_bytes(), input);
+    assert_eq!(report.quads.len(), 5);
+    assert!(report.quads.iter().all(|quad| {
+        matches!(
+            &quad.object,
+            RdfObjectSummary::Literal { value, .. }
+                if value == "0" || value == "1" || value == "100" || value == "1.0E400"
+        )
+    }));
+    assert!(report.quads.iter().all(|quad| {
+        !matches!(
+            &quad.object,
+            RdfObjectSummary::Literal { value, .. }
+                if value == "1.0" || value == "1e+02" || value == "-0" || value == "1e400"
+        )
+    }));
+}
+
+#[test]
+fn duplicate_preflight_does_not_set_a_nesting_limit() {
+    let depth = 256;
+    let mut input = vec![b'['; depth];
+    input.extend_from_slice(b"{}");
+    input.extend(std::iter::repeat_n(b']', depth));
+
+    let report = parse_json_ld(&input).expect("nesting policy belongs to W-011");
+    assert!(report.quads.is_empty());
 }
