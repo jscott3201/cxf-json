@@ -149,8 +149,8 @@ does not claim production-release adoption.
 - Whether `oxjsonld`/`oxrdf` can remain the guarded JSON-LD semantic adapter on
   native Rust and the WASM target.
 - Whether retaining source bytes plus available parser error positions is enough
-  for the first public release. D-014 answers yes; W-004 owns any later
-  project-owned source mapper.
+  for the first public release. D-014 answers yes; W-004 operationalizes that
+  boundary without a source mapper under D-023.
 - Whether the proposed source/RDF boundary in D-004 is executable without
   exposing third-party RDF types.
 

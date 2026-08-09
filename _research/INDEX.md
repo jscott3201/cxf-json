@@ -8,8 +8,9 @@ project adopts a specification and decision process.
 Build a purpose-built CXF parser, not a general JSON, JSON-LD, RDF, Modelica, or
 CDL parser. JSON-LD expansion and RDF identity are internal mechanisms required
 to interpret CXF. The public contract returns CXF values and CXF diagnostics,
-retains original bytes and available error locations, and preserves unknown CXF
-extension terms without exposing a general RDF toolkit.
+retains submitted bytes and available parser locations, rejects duplicate decoded
+member names, and preserves unknown CXF extension terms without exposing a
+general RDF toolkit.
 
 Do not use pest for the CXF input. A PEG grammar would replace an established
 JSON parser without handling JSON-LD expansion or CXF graph semantics. Keep
@@ -38,7 +39,9 @@ parent repositories do not meet the owner-established community threshold.
 | [FIRST-SLICE.md](FIRST-SLICE.md) | Selected W-024 scope, dependency gate, and acceptance tests |
 | [DEPENDENCY-GOVERNANCE.md](DEPENDENCY-GOVERNANCE.md) | Frozen community, maintenance, version, and advisory evidence |
 | [W003-CXF-INGESTION-QUALIFICATION.md](W003-CXF-INGESTION-QUALIFICATION.md) | CXF-only processor operation matrix and corpus gates |
+| [W004-SOURCE-FIDELITY-CONTRACT.md](W004-SOURCE-FIDELITY-CONTRACT.md) | Submitted-byte, duplicate-name, location, pointer, and graph-evidence contract |
 | [results/W-003.md](results/W-003.md) | W-003 behavior, corpus, target, size, and policy evidence |
+| [results/W-004.md](results/W-004.md) | W-004 implementation, corpus regression, target, and policy evidence |
 | [results/W-024.md](results/W-024.md) | First-slice implementation and verification evidence |
 
 ## Evidence policy
@@ -78,8 +81,8 @@ Folder: **Modelica JSON Rust** in the Aionforge Labs workspace.
 | [MJR Defects](https://aionforgelabs.monday.com/boards/18425770675) | Observed implementation defect classes |
 | [MJR Spec](https://aionforgelabs.monday.com/boards/18425770674) | Research documents, decisions, open questions, and compatibility findings |
 
-W-024 and W-003 are complete. W-004, W-005, W-008, and W-009 remain queued in
-Backlog. Other planned work also remains in Backlog.
+W-024 and W-003 are complete. W-004 is active. W-005, W-008, and W-009 remain
+queued in Backlog. Other planned work also remains in Backlog.
 
 Private repository:
 [jscott3201/modelica-json-rust](https://github.com/jscott3201/modelica-json-rust).

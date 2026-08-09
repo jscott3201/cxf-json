@@ -46,6 +46,8 @@ Focused examples:
 
 The pinned source is
 [`cxf.rst`](https://raw.githubusercontent.com/lbl-srg/obc/e1c74224778b12297ee49455719c6e58ec71f810/specification/source/cxf.rst).
+The [published OBC CXF section](https://obc.lbl.gov/specification/cxf.html) is the
+rendered guidance; the pinned source remains the reproducible evidence revision.
 
 A reader or validator needs to account for these rules:
 

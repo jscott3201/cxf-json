@@ -14,13 +14,102 @@ fn retains_exact_input_bytes() {
 }
 
 #[test]
-fn records_serde_duplicate_member_behavior() {
-    let input = br#"{"value":1,"value":2,"nested":{"key":1,"key":2}}"#;
-    let document = parse_json(input).expect("duplicate members are valid JSON syntax");
+fn rejects_duplicate_decoded_member_names() {
+    let cases: &[&[u8]] = &[
+        br#"{"value":1,"value":2}"#,
+        br#"{"nested":{"key":1,"key":2}}"#,
+        br#"[{"key":1,"key":2}]"#,
+        br#"{"a":1,"\u0061":2}"#,
+        br#"{"value":1,"value":1e400}"#,
+    ];
 
-    assert_eq!(document.source.as_bytes(), input);
-    assert_eq!(document.value["value"], 2);
-    assert_eq!(document.value["nested"]["key"], 2);
+    for input in cases {
+        let failure = parse_json(input).expect_err("duplicate members must be rejected");
+
+        assert_eq!(failure.source.as_bytes(), *input);
+        assert_eq!(failure.diagnostic.stage, DiagnosticStage::Json);
+        assert!(
+            failure
+                .diagnostic
+                .message
+                .contains("duplicate object member")
+        );
+        assert!(failure.diagnostic.range.is_some());
+        assert_eq!(failure.diagnostic.pointer, None);
+        assert_eq!(failure.diagnostic.rdf_term, None);
+    }
+}
+
+#[test]
+fn compares_member_names_without_unicode_normalization() {
+    let input = "{\"é\":1,\"e\\u0301\":2}".as_bytes();
+    let document = parse_json(input).expect("distinct decoded names should parse");
+
+    assert_eq!(
+        document.value.as_object().map(serde_json::Map::len),
+        Some(2)
+    );
+    assert_eq!(document.value["é"], 1);
+    assert_eq!(document.value["e\u{301}"], 2);
+}
+
+#[test]
+fn preserves_serde_private_number_token_as_an_object_name() {
+    let input = br#"{"$serde_json::private::Number":"not a number"}"#;
+    let document = parse_json(input).expect("ordinary object should not become a Serde number");
+
+    assert_eq!(
+        document.value["$serde_json::private::Number"],
+        "not a number"
+    );
+}
+
+#[test]
+fn lexical_preflight_rejects_malformed_json_forms() {
+    let cases: &[&[u8]] = &[
+        b"01",
+        b"-",
+        b"1.",
+        b"1e",
+        b"[1,]",
+        br#"{"key":1,}"#,
+        br#"{"key" 1}"#,
+        br#"{"key":1 "other":2}"#,
+        br#""\uDEAD""#,
+        b"true false",
+    ];
+
+    for input in cases {
+        let failure = parse_json(input).expect_err("malformed JSON must fail");
+        let range = failure
+            .diagnostic
+            .range
+            .expect("lexical failure should be located");
+
+        assert_eq!(failure.source.as_bytes(), *input);
+        assert_eq!(failure.diagnostic.stage, DiagnosticStage::Json);
+        assert!(range.start.offset <= input.len() as u64);
+        assert!(range.end.offset <= input.len() as u64);
+    }
+}
+
+#[test]
+fn nested_duplicate_location_is_relative_to_the_submitted_document() {
+    let input = b"{\n  \"nested\": {\n    \"key\": 1,\n    \"key\": 2\n  }\n}";
+    let failure = parse_json(input).expect_err("nested duplicate must be rejected");
+    let start = failure
+        .diagnostic
+        .range
+        .expect("duplicate detection should be located")
+        .start;
+    let nested_offset = input
+        .windows(b"{\n    \"key\"".len())
+        .position(|window| window == b"{\n    \"key\"")
+        .expect("test input should contain the nested object");
+
+    assert!(start.offset as usize > nested_offset);
+    assert_eq!(start.line, 3);
+    assert_eq!(start.column, 4);
 }
 
 #[test]
@@ -32,6 +121,7 @@ fn retains_number_spelling_only_in_source_bytes() {
             .windows(b"1e+02".len())
             .any(|bytes| bytes == b"1e+02")
     );
+    assert!(NUMBERS.windows(2).any(|bytes| bytes == b"-0"));
     assert_eq!(document.value["exponent"].as_f64(), Some(100.0));
     assert_eq!(document.value["integer"].as_i64(), Some(1));
     assert_eq!(document.value["decimal"].as_f64(), Some(1.0));
@@ -59,6 +149,8 @@ fn malformed_json_returns_owned_diagnostic() {
 
     assert_eq!(failure.source.as_bytes(), input);
     assert_eq!(failure.diagnostic.stage, DiagnosticStage::Json);
+    assert_eq!(failure.diagnostic.pointer, None);
+    assert_eq!(failure.diagnostic.rdf_term, None);
     let start = failure
         .diagnostic
         .range
@@ -118,9 +210,59 @@ fn invalid_utf8_returns_owned_diagnostic() {
     assert_eq!(
         start,
         SourcePosition {
-            offset: 3,
+            offset: 2,
             line: 0,
-            column: 3,
+            column: 2,
+        }
+    );
+}
+
+#[test]
+fn invalid_utf8_precedes_unrelated_number_processing() {
+    let mut input = b"[1e400,\"".to_vec();
+    let invalid_offset = input.len();
+    input.push(0xff);
+    input.extend_from_slice(b"\"]");
+    let failure = parse_json(&input).expect_err("input is not valid UTF-8 JSON");
+    let start = failure
+        .diagnostic
+        .range
+        .expect("invalid UTF-8 should be located")
+        .start;
+
+    assert_eq!(failure.source.as_bytes(), input);
+    assert_eq!(start.offset as usize, invalid_offset);
+}
+
+#[test]
+fn locations_use_zero_based_byte_offsets_and_columns() {
+    let unicode = parse_json("{\"é\": @}".as_bytes()).expect_err("input is malformed");
+    let unicode_start = unicode
+        .diagnostic
+        .range
+        .expect("syntax error should be located")
+        .start;
+    assert_eq!(
+        unicode_start,
+        SourcePosition {
+            offset: 7,
+            line: 0,
+            column: 7,
+        }
+    );
+
+    let crlf = parse_json(b"{\r\n  @\r\n}").expect_err("input is malformed");
+    let crlf_start = crlf
+        .diagnostic
+        .range
+        .expect("syntax error should be located")
+        .start;
+    assert_eq!(
+        crlf_start,
+        SourcePosition {
+            offset: 5,
+            line: 1,
+            column: 2,
         }
     );
 }
@@ -145,6 +287,8 @@ fn owned_boundary_dto_round_trips_through_serde_json() {
             stage: DiagnosticStage::Json,
             message: "example".to_owned(),
             range: Some(range),
+            pointer: Some("/é/a~1b~0c".to_owned()),
+            rdf_term: Some("https://example.test/predicate".to_owned()),
         }],
         quads: vec![RdfQuadSummary {
             subject: RdfNodeSummary {
@@ -165,10 +309,18 @@ fn owned_boundary_dto_round_trips_through_serde_json() {
     let decoded: ProbeReport = serde_json::from_slice(&encoded).expect("report should deserialize");
 
     assert_eq!(decoded, report);
+    assert_eq!(
+        decoded.diagnostics[0].pointer.as_deref(),
+        Some("/é/a~1b~0c")
+    );
+    assert_eq!(
+        decoded.diagnostics[0].rdf_term.as_deref(),
+        Some("https://example.test/predicate")
+    );
 }
 
 #[test]
-fn parses_minimal_arrays_and_escaped_json_pointer_tokens() {
+fn evaluates_json_pointer_without_claiming_a_source_map() {
     let array = parse_json(br#"[null,true,1,"value"]"#).expect("array should parse");
     assert_eq!(array.value.as_array().map(Vec::len), Some(4));
 

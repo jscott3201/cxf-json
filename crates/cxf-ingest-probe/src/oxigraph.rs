@@ -3,33 +3,33 @@ use oxrdf::{GraphName, NamedOrBlankNode, Quad, Term};
 
 use crate::{
     DiagnosticStage, ProbeDiagnostic, ProbeFailure, ProbeReport, RdfNodeKind, RdfNodeSummary,
-    RdfObjectSummary, RdfQuadSummary, SourceDocument, SourcePosition, SourceRange,
+    RdfObjectSummary, RdfQuadSummary, SourceDocument,
+    json::{source_range, validate_unique_members},
 };
 
 /// Parses JSON-LD into owned RDF summaries without exposing Oxigraph types.
 pub fn parse_json_ld(input: &[u8]) -> Result<ProbeReport, ProbeFailure> {
+    validate_unique_members(input)?;
+
     let mut quads = JsonLdParser::new()
         .for_slice(input)
         .map(|result| result.map(|quad| summarize_quad(&quad)))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| ProbeFailure {
             source: SourceDocument::new(input),
-            diagnostic: ProbeDiagnostic {
+            diagnostic: Box::new(ProbeDiagnostic {
                 stage: DiagnosticStage::JsonLd,
                 message: error.to_string(),
-                range: error.location().map(|range| SourceRange {
-                    start: SourcePosition {
-                        offset: range.start.offset,
-                        line: range.start.line,
-                        column: range.start.column,
-                    },
-                    end: SourcePosition {
-                        offset: range.end.offset,
-                        line: range.end.line,
-                        column: range.end.column,
-                    },
+                range: error.location().map(|range| {
+                    source_range(
+                        input,
+                        usize::try_from(range.start.offset).unwrap_or(input.len()),
+                        usize::try_from(range.end.offset).unwrap_or(input.len()),
+                    )
                 }),
-            },
+                pointer: None,
+                rdf_term: None,
+            }),
         })?;
 
     quads.sort();

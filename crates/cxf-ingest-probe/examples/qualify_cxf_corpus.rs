@@ -467,7 +467,7 @@ fn qualify_file(path: &Path, expected_failure: Option<&str>) -> Result<FileRepor
         Err(failure) => (
             None,
             Some(FileFailure::Parse {
-                diagnostic: failure.diagnostic,
+                diagnostic: *failure.diagnostic,
             }),
         ),
     };

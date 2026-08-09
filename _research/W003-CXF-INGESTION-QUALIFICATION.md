@@ -87,4 +87,4 @@ product CLI or public API.
   W-009 owns those.
 - External fixture redistribution or automated fetching.
 - Blank-node dataset canonicalization; W-012 owns cross-processor comparison.
-- Per-node source mapping; W-004 owns that contract.
+- Per-node source mapping; W-004 records that v1 does not provide one.
