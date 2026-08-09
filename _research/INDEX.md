@@ -81,8 +81,8 @@ Folder: **Modelica JSON Rust** in the Aionforge Labs workspace.
 | [MJR Defects](https://aionforgelabs.monday.com/boards/18425770675) | Observed implementation defect classes |
 | [MJR Spec](https://aionforgelabs.monday.com/boards/18425770674) | Research documents, decisions, open questions, and compatibility findings |
 
-W-024 and W-003 are complete. W-004 is active. W-005, W-008, and W-009 remain
-queued in Backlog. Other planned work also remains in Backlog.
+W-024, W-003, and W-004 are complete. W-005, W-008, and W-009 remain queued in
+Backlog. Other planned work also remains in Backlog.
 
 Private repository:
 [jscott3201/modelica-json-rust](https://github.com/jscott3201/modelica-json-rust).
@@ -92,5 +92,7 @@ PR [#2](https://github.com/jscott3201/modelica-json-rust/pull/2) merged its
 closeout and D-019 as `7d01958b2accb55fd731d27205bf03f9ad69ef59`.
 PR [#3](https://github.com/jscott3201/modelica-json-rust/pull/3) merged W-003 as
 `b16061004683c186777a6d7fb87455bde2454834`.
+PR [#5](https://github.com/jscott3201/modelica-json-rust/pull/5) merged W-004 as
+`268b36186fa9df1be3e1103535d8ccce260e40b2`.
 D-013 keeps the repository private until the stability gate is defined and met,
 then releases it under `MIT OR Apache-2.0`.
