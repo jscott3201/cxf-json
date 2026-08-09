@@ -67,9 +67,8 @@ arrays do not imply order, and equivalent compacted documents may serialize
 differently. Full IRIs are internal identity.
 
 The parser implements only the JSON-LD operations required by the CXF profile
-and accepted producer corpus. The production candidate is `oxjsonld` behind an
-internal adapter. `W-024` proves the minimal boundary before W-003 performs
-CXF-focused corpus work.
+and accepted producer corpus. D-022 qualifies `oxjsonld` behind an internal
+adapter for private CXF ingestion; production-release adoption remains open.
 
 Evidence:
 
@@ -227,18 +226,16 @@ publication automation and must call that policy against the release ref before
 publishing. Until W-023 implements that dependency, automated publication is out
 of scope.
 
-### D-018: qualify Serde and OxJSONLD for private development
+### D-018: qualify Serde and permit guarded OxJSONLD evaluation
 
 W-024 passed Rust 1.97.1 native and WASM builds, exact dependency allowlists,
 local advisory/license policy, PR CI, and clean reviews. Use `serde` and
 `serde_json` for ordinary JSON plus owned DTO boundaries during private
 development.
 
-`oxjsonld` and `oxrdf` remain isolated behind the internal adapter and are
-qualified for W-003 processor conformance work. This is not final production
-processor adoption. D-P01 remains open until W-003 supplies its CXF operation
-matrix and corpus evidence. Production-release dependency adoption remains
-gated by W-023's release-policy integration.
+W-024 permitted `oxjsonld` and `oxrdf` only for guarded W-003 evaluation. D-022
+now governs their private-development CXF use. This is not final production
+processor adoption; W-023 retains the production-release gate.
 
 ### D-019: the library is a purpose-built CXF parser
 
@@ -275,12 +272,25 @@ reusable release policy fail while either the resolved direct dependency or its
 D-021 marker remains. Workspace inheritance and package aliases do not bypass
 the check; deleting the marker alone does not clear it.
 
+### D-022: qualify guarded OxJSONLD/OxRDF for private CXF ingestion
+
+W-003 passed the owned CXF operation matrix, the Git-pinned read-only Open
+Control Engine corpus, native and Node-executed WASM tests, resource observation,
+dependency policy, PR CI, and independent review. Keep `oxjsonld` and `oxrdf`
+behind the private CXF adapter for term identity, datatypes, language tags, and
+set relationships during private development.
+
+This decision does not expose RDF types, derive CXF array order from RDF, enable
+remote loading, or approve a production release. D-020 governs ordered
+projection, D-021 governs the temporary WASM entropy exception, and W-023 still
+gates production-release dependency adoption.
+
 ## Provisional decisions
 
 These require spikes before adoption:
 
-- `D-P01`: use the guarded `oxjsonld`/`oxrdf` adapter rather than hand-writing
-  CXF context expansion.
+- `D-P01`: superseded by D-022; use the guarded adapter for private CXF
+  ingestion, subject to D-020, D-021, and W-023.
 - `D-P02`: superseded by D-014; retained bytes plus available error positions
   are the v1 contract and exact per-node spans move to W-004.
 - `D-P03`: ship one npm package with explicit browser, web, and Node subpaths.

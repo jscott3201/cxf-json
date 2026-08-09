@@ -1,6 +1,6 @@
 # W-003: CXF ingestion qualification
 
-Status: active.
+Status: complete. PR #3 merged as `b160610`.
 
 ## Purpose
 

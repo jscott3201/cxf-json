@@ -3,7 +3,7 @@
 ## Recommendation
 
 Use `serde` and `serde_json` inside the CXF parser for syntax, options, and owned
-boundary DTOs. Evaluate `oxjsonld`/`oxrdf` as a private CXF ingestion stage.
+boundary DTOs. D-022 permits `oxjsonld`/`oxrdf` as a private CXF ingestion stage.
 Retain original input bytes. Per-node source spans remain an open product
 requirement because the packages that provide them do not clear the dependency
 community gate.
@@ -16,7 +16,7 @@ test it against the relevant standard cases, and make no general JSON-LD claim.
 | Candidate | Strength | Gap | Current use |
 |---|---|---|---|
 | `serde_json` 1.0.151 | Established Serde organization, typed and streaming JSON, 5,614-star parent | No JSON-LD semantics or per-node source map; ordinary value model does not preserve duplicates | Qualified for private development by D-018 |
-| `oxjsonld` 0.2.5 | Direct JSON-LD to `oxrdf`; active 1,805-star Oxigraph parent | No documented lossless source tree; contributor concentration requires isolation | Guarded W-003 candidate |
+| `oxjsonld` 0.2.5 | Direct JSON-LD to `oxrdf`; active 1,805-star Oxigraph parent | No documented lossless source tree; contributor concentration requires isolation | Private CXF stage under D-022 |
 | `json-syntax` 0.12.5 | Preserves duplicate entries, order, lexical numbers, and locations | 6-star individual repository and an unmaintained transitive advisory | Reject for production |
 | `json-ld` 0.21.4 | Expansion, compaction, flattening, loaders, RDF conversion | 153-star individual repository with concentrated contributors | Reject for production |
 | `sophia_jsonld` 0.10.0 | Sophia RDF integration | 325-star parent and wraps older releases of the rejected `json-ld` stack | Reject for production |
@@ -50,9 +50,9 @@ W-024 qualifies Serde for private-development use after passing lockfile, CI,
 license, feature, and advisory gates. Production-release adoption remains gated
 by W-023. Oxigraph clears the age, activity, and adoption floors; its contributor
 concentration is recorded as R-011 and contained through an internal adapter.
-It remains a guarded W-003 candidate. The `json-ld` and `json-syntax` stack
-remains research evidence and must not enter `Cargo.lock` without a new owner
-exception.
+D-022 qualifies the guarded Oxigraph adapter for private CXF ingestion. The
+`json-ld` and `json-syntax` stack remains research evidence and must not enter
+`Cargo.lock` without a new owner exception.
 
 ## Why pest loses this comparison
 

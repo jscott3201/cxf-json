@@ -18,11 +18,10 @@ source parsing.
 
 Serde and `serde_json` are qualified by D-018 for private-development use at
 ordinary JSON and owned DTO boundaries. `oxjsonld` and `oxrdf` passed W-024
-native/WASM feasibility and remain guarded W-003 candidates behind an internal
-adapter, not the selected production processor. Production-release adoption
-remains gated by W-023. `json-ld` and `json-syntax` are excluded from production
-because their parent repositories do not meet the owner-established community
-threshold.
+native/WASM feasibility and W-003 CXF qualification. D-022 keeps them behind the
+private CXF adapter; they are not approved for production release. W-023 retains
+that gate. `json-ld` and `json-syntax` are excluded from production because their
+parent repositories do not meet the owner-established community threshold.
 
 ## Documents
 
@@ -79,9 +78,8 @@ Folder: **Modelica JSON Rust** in the Aionforge Labs workspace.
 | [MJR Defects](https://aionforgelabs.monday.com/boards/18425770675) | Observed implementation defect classes |
 | [MJR Spec](https://aionforgelabs.monday.com/boards/18425770674) | Research documents, decisions, open questions, and compatibility findings |
 
-W-024 was the first owner-ranked slice and is complete. W-003 is active; W-004,
-W-005, W-008, and W-009 remain queued in Backlog. Other planned work also
-remains in Backlog.
+W-024 and W-003 are complete. W-004, W-005, W-008, and W-009 remain queued in
+Backlog. Other planned work also remains in Backlog.
 
 Private repository:
 [jscott3201/modelica-json-rust](https://github.com/jscott3201/modelica-json-rust).
@@ -89,5 +87,7 @@ PR [#1](https://github.com/jscott3201/modelica-json-rust/pull/1) merged W-024 as
 `8b227a1278fade28d4157eb8ef615560b54b1a0d`.
 PR [#2](https://github.com/jscott3201/modelica-json-rust/pull/2) merged its
 closeout and D-019 as `7d01958b2accb55fd731d27205bf03f9ad69ef59`.
+PR [#3](https://github.com/jscott3201/modelica-json-rust/pull/3) merged W-003 as
+`b16061004683c186777a6d7fb87455bde2454834`.
 D-013 keeps the repository private until the stability gate is defined and met,
 then releases it under `MIT OR Apache-2.0`.
