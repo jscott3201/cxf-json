@@ -15,8 +15,8 @@ JSON-LD while claiming general JSON-LD compatibility.
 
 | Candidate | Strength | Gap | Current use |
 |---|---|---|---|
-| `serde_json` 1.0.151 | Established Serde organization, typed and streaming JSON, 5,614-star parent | No JSON-LD semantics or per-node source map; ordinary value model does not preserve duplicates | Approved W-024 candidate |
-| `oxjsonld` 0.2.5 | Direct JSON-LD to `oxrdf`; active 1,805-star Oxigraph parent | No documented lossless source tree; contributor concentration requires isolation | Guarded production candidate |
+| `serde_json` 1.0.151 | Established Serde organization, typed and streaming JSON, 5,614-star parent | No JSON-LD semantics or per-node source map; ordinary value model does not preserve duplicates | Qualified for private development by D-018 |
+| `oxjsonld` 0.2.5 | Direct JSON-LD to `oxrdf`; active 1,805-star Oxigraph parent | No documented lossless source tree; contributor concentration requires isolation | Guarded W-003 candidate |
 | `json-syntax` 0.12.5 | Preserves duplicate entries, order, lexical numbers, and locations | 6-star individual repository and an unmaintained transitive advisory | Reject for production |
 | `json-ld` 0.21.4 | Expansion, compaction, flattening, loaders, RDF conversion | 153-star individual repository with concentrated contributors | Reject for production |
 | `sophia_jsonld` 0.10.0 | Sophia RDF integration | 325-star parent and wraps older releases of the rejected `json-ld` stack | Reject for production |
@@ -46,11 +46,11 @@ evaluated at the parent/monorepo level. Passing the star floor does not override
 an archive, stale release, unmaintained advisory, incompatible license, target
 failure, or concentrated ownership risk.
 
-Serde clears the community evidence floor but becomes adopted only after W-024
-passes its lockfile, CI, license, feature, and advisory gates. Oxigraph clears
-the age, activity, and adoption floors; its contributor concentration is
-recorded as R-011 and contained through an internal adapter. The owner approved
-it only for the guarded W-024 probe. The `json-ld` and `json-syntax` stack
+W-024 qualifies Serde for private-development use after passing lockfile, CI,
+license, feature, and advisory gates. Production-release adoption remains gated
+by W-023. Oxigraph clears the age, activity, and adoption floors; its contributor
+concentration is recorded as R-011 and contained through an internal adapter.
+It remains a guarded W-003 candidate. The `json-ld` and `json-syntax` stack
 remains research evidence and must not enter `Cargo.lock` without a new owner
 exception.
 

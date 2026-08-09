@@ -223,16 +223,18 @@ publication automation and must call that policy against the release ref before
 publishing. Until W-023 implements that dependency, automated publication is out
 of scope.
 
-### D-018: adopt Serde; carry OxJSONLD into W-003 only
+### D-018: qualify Serde and OxJSONLD for private development
 
 W-024 passed Rust 1.97.1 native and WASM builds, exact dependency allowlists,
-local advisory/license policy, PR CI, and clean reviews. Adopt `serde` and
-`serde_json` for ordinary JSON plus owned DTO boundaries.
+local advisory/license policy, PR CI, and clean reviews. Use `serde` and
+`serde_json` for ordinary JSON plus owned DTO boundaries during private
+development.
 
 `oxjsonld` and `oxrdf` remain isolated behind the internal adapter and are
 qualified for W-003 processor conformance work. This is not final production
 processor adoption. D-P01 remains open until W-003 supplies corpus and W3C
-evidence.
+evidence. Production-release dependency adoption remains gated by W-023's
+release-policy integration.
 
 ## Provisional decisions
 

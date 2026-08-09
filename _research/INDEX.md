@@ -16,11 +16,13 @@ JSON parser without handling JSON-LD expansion or CXF graph semantics. Keep
 pest on the candidate list only if a later project adds direct CDL or Modelica
 source parsing.
 
-Serde and `serde_json` are adopted by D-018 for ordinary JSON and owned DTO
-boundaries. `oxjsonld` and `oxrdf` passed W-024 native/WASM feasibility and remain
-guarded W-003 candidates behind an internal adapter, not the selected production
-processor. `json-ld` and `json-syntax` are excluded from production because their
-parent repositories do not meet the owner-established community threshold.
+Serde and `serde_json` are qualified by D-018 for private-development use at
+ordinary JSON and owned DTO boundaries. `oxjsonld` and `oxrdf` passed W-024
+native/WASM feasibility and remain guarded W-003 candidates behind an internal
+adapter, not the selected production processor. Production-release adoption
+remains gated by W-023. `json-ld` and `json-syntax` are excluded from production
+because their parent repositories do not meet the owner-established community
+threshold.
 
 ## Documents
 
