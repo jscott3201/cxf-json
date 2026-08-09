@@ -38,6 +38,8 @@ threshold.
 | [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) | Decisions that require evidence or owner input |
 | [FIRST-SLICE.md](FIRST-SLICE.md) | Selected W-024 scope, dependency gate, and acceptance tests |
 | [DEPENDENCY-GOVERNANCE.md](DEPENDENCY-GOVERNANCE.md) | Frozen community, maintenance, version, and advisory evidence |
+| [W003-CXF-INGESTION-QUALIFICATION.md](W003-CXF-INGESTION-QUALIFICATION.md) | CXF-only processor operation matrix and corpus gates |
+| [results/W-003.md](results/W-003.md) | W-003 behavior, corpus, target, size, and policy evidence |
 | [results/W-024.md](results/W-024.md) | First-slice implementation and verification evidence |
 
 ## Evidence policy
@@ -77,13 +79,15 @@ Folder: **Modelica JSON Rust** in the Aionforge Labs workspace.
 | [MJR Defects](https://aionforgelabs.monday.com/boards/18425770675) | Observed implementation defect classes |
 | [MJR Spec](https://aionforgelabs.monday.com/boards/18425770674) | Research documents, decisions, open questions, and compatibility findings |
 
-W-024 was the first owner-ranked slice and is complete. W-003, W-004, W-005,
-W-008, and W-009 retain Queue status `Queued` while remaining in the Backlog
-group; other planned work also remains in Backlog.
+W-024 was the first owner-ranked slice and is complete. W-003 is active; W-004,
+W-005, W-008, and W-009 remain queued in Backlog. Other planned work also
+remains in Backlog.
 
 Private repository:
 [jscott3201/modelica-json-rust](https://github.com/jscott3201/modelica-json-rust).
 PR [#1](https://github.com/jscott3201/modelica-json-rust/pull/1) merged W-024 as
 `8b227a1278fade28d4157eb8ef615560b54b1a0d`.
+PR [#2](https://github.com/jscott3201/modelica-json-rust/pull/2) merged its
+closeout and D-019 as `7d01958b2accb55fd731d27205bf03f9ad69ef59`.
 D-013 keeps the repository private until the stability gate is defined and met,
 then releases it under `MIT OR Apache-2.0`.

@@ -28,7 +28,7 @@ license, MSRV, feature, and advisory checks.
 | `json-ld` | 0.21.4 | `timothee-haudebourg/json-ld` | 2020-04-15 | 153 | 25 | 2026-07-02 | No | 1.83 | Reject for production |
 | `json-syntax` | 0.12.5 | `timothee-haudebourg/json-syntax` | 2022-07-01 | 6 | 5 | 2026-06-21 | No | 1.71 | Reject |
 | pest | 2.8.8 | `pest-parser/pest` | 2016-04-24 | 5,375 | 301 | 2026-08-09 | No | 1.83 | Healthy, wrong layer |
-| `getrandom` | 0.3.4 | `rust-random/getrandom` | 2019-01-19 | 571 | 254 | 2026-07-27 | No | 1.63 | D-016 target-only exception |
+| `getrandom` | 0.3.4 | `rust-random/getrandom` | 2019-01-19 | 571 | 254 | 2026-07-27 | No | 1.63 | D-016/D-021 target-only exception |
 
 Repository evidence:
 
@@ -90,5 +90,7 @@ It remains research evidence only.
   parsing layer for CXF JSON-LD.
 - `getrandom` 0.3.4: D-016 permits only the target-specific `wasm_js` feature
   needed to compile OxRDF blank-node generation for `wasm32-unknown-unknown`.
-  The exception expires at W-003 completion or before the first public release,
-  whichever comes first.
+  D-021 renews the exception through W-009 completion or the first public
+  release, whichever comes first. The locked-metadata D-021 check prevents the
+  reusable release-policy workflow from passing while the resolved direct
+  dependency or its marker remains.

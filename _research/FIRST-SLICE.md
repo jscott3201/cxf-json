@@ -65,7 +65,7 @@ D-016 permits one below-floor direct dependency: target-specific `getrandom`
 0.3.4 with only `wasm_js`, required to enable OxRDF's existing transitive entropy
 backend on `wasm32-unknown-unknown`. It is not part of the native graph. The
 exception expires at W-003 completion or before public release, whichever comes
-first.
+first. D-021 later renewed it through W-009 completion or public release.
 
 ## In scope
 
@@ -154,5 +154,5 @@ does not claim production-release adoption.
 - Whether the proposed source/RDF boundary in D-004 is executable without
   exposing third-party RDF types.
 
-The slice does not complete W-003, W-004, W-005, or W-006. Those items remain
-queued or planned at their existing corpus, licensing, and public-API scope.
+At W-024 completion, W-003, W-004, W-005, and W-006 remained queued or planned
+at their existing corpus, licensing, and public-API scope.

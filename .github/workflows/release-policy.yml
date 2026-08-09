@@ -27,6 +27,8 @@ jobs:
           ref: ${{ inputs.ref }}
       - name: Install Rust 1.97.1
         run: rustup toolchain install 1.97.1 --profile minimal
+      - name: Reject unresolved release blockers
+        run: python3 ci/check-release-blockers.py
       - name: Install dependency policy tools
         run: |
           cargo +1.97.1 install cargo-audit --version 0.22.1 --locked

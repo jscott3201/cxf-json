@@ -1,0 +1,74 @@
+{
+  "@graph": [
+    {
+      "@id": "https://example.test/cxf#Root",
+      "@type": "http://data.ashrae.org/S231P#Block",
+      "http://data.ashrae.org/S231P#containsBlock": [
+        { "@id": "https://example.test/cxf#Root.gain" }
+      ],
+      "http://data.ashrae.org/S231P#hasInput": [
+        { "@id": "https://example.test/cxf#Root.u" }
+      ],
+      "http://data.ashrae.org/S231P#hasOutput": [
+        { "@id": "https://example.test/cxf#Root.y" }
+      ]
+    },
+    {
+      "@id": "https://example.test/cxf#Root.gain",
+      "@type": "https://example.test/cxf#Buildings.Controls.OBC.CDL.Reals.MultiplyByParameter",
+      "http://data.ashrae.org/S231P#hasParameter": [
+        { "@id": "https://example.test/cxf#Root.gain.k" }
+      ],
+      "http://data.ashrae.org/S231P#hasInput": [
+        { "@id": "https://example.test/cxf#Root.gain.u" }
+      ],
+      "http://data.ashrae.org/S231P#hasOutput": [
+        { "@id": "https://example.test/cxf#Root.gain.y" }
+      ]
+    },
+    {
+      "@id": "https://example.test/cxf#Root.gain.k",
+      "@type": "http://data.ashrae.org/S231P#Parameter",
+      "http://data.ashrae.org/S231P#value": [
+        {
+          "@value": "0.5",
+          "@type": "http://www.w3.org/2001/XMLSchema#double"
+        }
+      ]
+    },
+    {
+      "@id": "https://example.test/cxf#Root.gain.u",
+      "@type": "http://data.ashrae.org/S231P#RealInput",
+      "http://data.ashrae.org/S231P#isOfDataType": [
+        { "@id": "http://data.ashrae.org/S231P#Real" }
+      ]
+    },
+    {
+      "@id": "https://example.test/cxf#Root.gain.y",
+      "@type": "http://data.ashrae.org/S231P#RealOutput",
+      "http://data.ashrae.org/S231P#isOfDataType": [
+        { "@id": "http://data.ashrae.org/S231P#Real" }
+      ],
+      "http://data.ashrae.org/S231P#isConnectedTo": [
+        { "@id": "https://example.test/cxf#Root.y" }
+      ]
+    },
+    {
+      "@id": "https://example.test/cxf#Root.u",
+      "@type": "http://data.ashrae.org/S231P#RealInput",
+      "http://data.ashrae.org/S231P#isOfDataType": [
+        { "@id": "http://data.ashrae.org/S231P#Real" }
+      ],
+      "http://data.ashrae.org/S231P#isConnectedTo": [
+        { "@id": "https://example.test/cxf#Root.gain.u" }
+      ]
+    },
+    {
+      "@id": "https://example.test/cxf#Root.y",
+      "@type": "http://data.ashrae.org/S231P#RealOutput",
+      "http://data.ashrae.org/S231P#isOfDataType": [
+        { "@id": "http://data.ashrae.org/S231P#Real" }
+      ]
+    }
+  ]
+}

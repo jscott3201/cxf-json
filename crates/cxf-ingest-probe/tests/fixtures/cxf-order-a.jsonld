@@ -1,0 +1,18 @@
+{
+  "@context": {
+    "S231": "http://data.ashrae.org/S231P#",
+    "ex": "https://example.test/order#"
+  },
+  "@graph": [
+    {
+      "@id": "ex:Root",
+      "@type": "S231:Block",
+      "S231:containsBlock": [
+        { "@id": "ex:Root.first" },
+        { "@id": "ex:Root.second" }
+      ]
+    },
+    { "@id": "ex:Root.first", "@type": "S231:Block" },
+    { "@id": "ex:Root.second", "@type": "S231:Block" }
+  ]
+}

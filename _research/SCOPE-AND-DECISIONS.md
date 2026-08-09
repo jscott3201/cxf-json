@@ -215,6 +215,7 @@ native dependency or network loader.
 The exception expires when W-003 completes or before the first public release,
 whichever comes first. Re-review must remove it if OxRDF no longer needs direct
 feature unification; otherwise renewal requires another owner ruling.
+D-021 records the resulting renewal and its replacement expiry.
 
 ### D-017: PR CI stays fast; heavy policy runs on releases
 
@@ -235,9 +236,9 @@ development.
 
 `oxjsonld` and `oxrdf` remain isolated behind the internal adapter and are
 qualified for W-003 processor conformance work. This is not final production
-processor adoption. D-P01 remains open until W-003 supplies corpus and W3C
-evidence. Production-release dependency adoption remains gated by W-023's
-release-policy integration.
+processor adoption. D-P01 remains open until W-003 supplies its CXF operation
+matrix and corpus evidence. Production-release dependency adoption remains
+gated by W-023's release-policy integration.
 
 ### D-019: the library is a purpose-built CXF parser
 
@@ -250,6 +251,29 @@ W-003 tests the JSON-LD behaviors required by CXF and the pinned producer corpus
 it does not seek broad JSON-LD product conformance. Unknown terms remain
 available through a CXF extension view so forward compatibility does not turn
 the crate into an RDF toolkit.
+
+### D-020: ordered CXF projection comes from source, not RDF
+
+W-003 proves that reordering an ordinary JSON-LD array leaves the converted RDF
+unchanged. CXF consumers may assign meaning to `@graph`, containment, port,
+parameter, and connection order. The parser therefore retains an ordered CXF
+source/DTO representation for projection. The private RDF stage supplies term
+identity and set relationships; RDF iteration order never determines CXF order.
+
+### D-021: renew the target-only getrandom exception through W-009
+
+The owner renewed D-016 on 2026-08-09 after W-003 passed its local native, WASM,
+dependency, and read-only CXF corpus gates. `getrandom` remains pinned to 0.3.4,
+target-specific to `wasm32-unknown-unknown`, optional with the Oxigraph adapter,
+and limited to `wasm_js`.
+
+The renewal expires when W-009 completes or before the first public release,
+whichever comes first. W-009 must remove the direct feature-unification
+dependency if OxRDF no longer needs it; another renewal requires a new owner
+ruling. `ci/check-release-blockers.py` reads locked Cargo metadata and makes the
+reusable release policy fail while either the resolved direct dependency or its
+D-021 marker remains. Workspace inheritance and package aliases do not bypass
+the check; deleting the marker alone does not clear it.
 
 ## Provisional decisions
 
