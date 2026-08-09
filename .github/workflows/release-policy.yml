@@ -1,0 +1,37 @@
+name: Release policy
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to audit
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to audit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+      - name: Install Rust 1.97.1
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: Install dependency policy tools
+        run: |
+          cargo +1.97.1 install cargo-audit --version 0.22.1 --locked
+          cargo +1.97.1 install cargo-deny --version 0.19.0 --locked
+      - name: Audit advisories
+        run: cargo +1.97.1 audit
+      - name: Check licenses, bans, and sources
+        run: cargo +1.97.1 deny check

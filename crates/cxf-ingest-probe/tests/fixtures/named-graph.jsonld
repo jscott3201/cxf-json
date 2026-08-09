@@ -1,0 +1,11 @@
+{
+  "@context": {
+    "ex": "https://example.test/",
+    "label": "ex:label"
+  },
+  "@id": "ex:graph",
+  "@graph": {
+    "@id": "ex:subject",
+    "label": "alpha"
+  }
+}

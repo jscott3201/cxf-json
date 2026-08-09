@@ -1,0 +1,145 @@
+# Proposed architecture
+
+## Workspace shape
+
+```text
+crates/
+  cxf-types/       owned RDF/CXF values, source locations, diagnostics
+  cxf-reader/      bytes -> JSON -> JSON-LD -> graph -> typed projection
+  cxf-validation/  versioned CXF profile rules
+  cxf-python/      PyO3 extension module
+  cxf-wasm/        wasm-bindgen browser and Node adapter
+```
+
+If processor dependencies make the base reader too large or fail WASM, split
+full JSON-LD expansion into `cxf-jsonld-processing`. Do not make that split
+until `W-003` has measurements; crate boundaries should follow an observed
+dependency or release boundary.
+
+W-024 precedes this public workspace shape with one `publish = false`
+`cxf-ingest-probe` crate. It may prove boundaries but does not establish public
+crate names or APIs.
+
+The workspace should use Cargo feature resolver 2. Python and WASM crates are
+leaf adapters. Neither is a feature on the same library target because their
+host dependencies and crate types are unrelated.
+
+Sources:
+
+- [Cargo workspaces](https://doc.rust-lang.org/cargo/reference/workspaces.html)
+- [Cargo feature resolver](https://doc.rust-lang.org/cargo/reference/features.html)
+
+## Data flow
+
+```text
+bytes
+  -> input policy and UTF-8 check
+  -> retained source plus Serde syntax/DTO boundary
+  -> guarded OxJSONLD context processing and RDF conversion
+  -> graph indexes by full IRI
+  -> typed CXF projection plus preserved unknown triples
+  -> versioned profile diagnostics
+  -> Rust / Python / JavaScript DTO conversion
+```
+
+Parsing, projection, and validation must be callable separately. Consumers that
+need forensic access can inspect a graph that failed CXF validation. A strict
+gate marks the validation report rejected without changing parse success or
+discarding the graph.
+
+## Core contract sketch
+
+This is illustrative, not a committed API.
+
+```rust
+pub fn parse_bytes(
+    input: &[u8],
+    options: &ParseOptions,
+) -> Result<ParsedDocument, ParseFailure>;
+
+pub struct ParsedDocument {
+    pub source: SourceDocument,
+    pub graph: Graph,
+    pub cxf: CxfProjection,
+    pub validation: ValidationReport,
+}
+```
+
+`ParseFailure` is limited to failures that prevent graph construction, such as
+input limits, invalid UTF-8, malformed JSON, or failed JSON-LD processing.
+`ValidationReport` contains an acceptance flag and diagnostics. Profile policy
+determines the flag, so strict rejection is observable without losing the
+document.
+
+`ParseOptions` includes an optional absolute document IRI. JSON-LD uses it as
+the default base for relative identifiers. Every host adapter exposes the same
+option. If RDF conversion omits an unresolved relative IRI, the reader preserves
+its located JSON value and records a conversion-loss diagnostic rather than
+turning valid JSON-LD into a parse failure.
+
+The public contract needs these invariants:
+
+- no borrowed input escapes `parse_bytes`;
+- full IRIs identify RDF terms;
+- source bytes are retained; reported locations use byte offsets when the
+  approved parser exposes them;
+- unknown triples survive projection;
+- diagnostic codes are stable within a major release;
+- graph iteration order is not semantic order;
+- public methods do not panic on user input.
+
+## Identity and extensions
+
+Do not rewrite a legacy IRI into a current IRI inside the graph. A profile may
+project both to one known CXF role while retaining the original term and a
+compatibility diagnostic. This prevents normalization from fabricating RDF
+equivalence.
+
+Unknown classes, predicates, and values remain queryable. A closed Rust enum
+may represent known CXF roles, but every node also needs access to its original
+RDF terms.
+
+## Loader boundary
+
+The core loader interface accepts preloaded documents or returns a policy
+failure. Native HTTP, filesystem, browser fetch, and Node fetch belong in
+separate adapters. The initial release supports embedded and caller-provided
+contexts only.
+
+Any future remote loader must receive the absolute requested IRI and return
+bytes plus the final IRI and content type. The policy layer owns allowlists,
+redirects, limits, caching, and cancellation.
+
+## Concurrency
+
+Parsed documents should be immutable after construction. Shared caches must be
+bounded and synchronized, or omitted from the initial release. Immutable owned
+results reduce free-threaded Python risk and let native callers share documents
+with `Arc` without adapter-specific synchronization.
+
+If validation configuration is compiled, keep the compiled form immutable.
+Avoid process-global mutable loader or context state.
+
+## Serialization
+
+Do not promise byte-for-byte JSON-LD round-trip. Source bytes can be retained
+when requested, while semantic serialization may choose a normalized output.
+Any canonical RDF output is a separate operation and requires a tested blank
+node canonicalization algorithm.
+
+Python and JavaScript DTO serialization must define integer, decimal, IRI,
+binary source, optional-field, and validation-report behavior explicitly. A
+bulk JSON form serializes the whole document envelope, not the graph alone.
+Boundary equivalence is covered by `W-010`.
+
+## Panic and failure boundary
+
+All input-dependent failures return typed results. Python maps them to one base
+exception with structured attributes. WASM throws or returns a structured error
+according to one documented convention. The project should not rely on catching
+Rust panics in WASM; panic recovery has additional nightly and runtime
+requirements in wasm-bindgen.
+
+Evidence:
+
+- [wasm-bindgen panic handling](https://wasm-bindgen.github.io/wasm-bindgen/reference/catch-unwind.html)
