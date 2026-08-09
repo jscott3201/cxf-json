@@ -3,7 +3,7 @@
 ## Recommendation
 
 Use `serde` and `serde_json` inside the CXF parser for syntax, options, and owned
-boundary DTOs. Evaluate `oxjsonld`/`oxrdf` as a private CXF ingestion stage.
+boundary DTOs. D-022 permits `oxjsonld`/`oxrdf` as a private CXF ingestion stage.
 Retain original input bytes. Per-node source spans remain an open product
 requirement because the packages that provide them do not clear the dependency
 community gate.

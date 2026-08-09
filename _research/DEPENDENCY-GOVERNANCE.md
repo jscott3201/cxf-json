@@ -23,8 +23,8 @@ license, MSRV, feature, and advisory checks.
 |---|---:|---|---|---:|---:|---|---|---:|---|
 | `serde` | 1.0.229 | `serde-rs/serde` | 2013-11-13 | 10,759 | 929 | 2026-07-25 | No | 1.56 | Qualified for private development |
 | `serde_json` | 1.0.151 | `serde-rs/json` | 2015-05-19 | 5,614 | 661 | 2026-08-08 | No | 1.71 | Qualified for private development |
-| `oxjsonld` | 0.2.5 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Private development under D-022 |
-| `oxrdf` | 0.3.3 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Private development under D-022 |
+| `oxjsonld` | 0.2.5 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Private CXF ingestion under D-022; W-023 blocks release |
+| `oxrdf` | 0.3.3 | `oxigraph/oxigraph` | 2018-05-16 | 1,805 | 162 | 2026-08-09 | No | 1.87 | Private CXF ingestion under D-022; W-023 blocks release |
 | `json-ld` | 0.21.4 | `timothee-haudebourg/json-ld` | 2020-04-15 | 153 | 25 | 2026-07-02 | No | 1.83 | Reject for production |
 | `json-syntax` | 0.12.5 | `timothee-haudebourg/json-syntax` | 2022-07-01 | 6 | 5 | 2026-06-21 | No | 1.71 | Reject |
 | pest | 2.8.8 | `pest-parser/pest` | 2016-04-24 | 5,375 | 301 | 2026-08-09 | No | 1.83 | Healthy, wrong layer |
@@ -58,10 +58,10 @@ dependency graph.
 
 Oxigraph has an organization-owned, active repository with substantial stars,
 forks, history, and multiple historical contributors. Its commit history is
-nevertheless concentrated around one lead maintainer. W-024 may evaluate
-`oxjsonld` and `oxrdf`, but production adoption requires the slice's target,
-license, feature, and locked-graph evidence. If adopted, Oxigraph types remain
-behind an internal adapter and its health is rechecked on dependency updates.
+nevertheless concentrated around one lead maintainer. W-024 permitted guarded
+evaluation; W-003 supplied target, corpus, resource, license, feature, and
+locked-graph evidence. D-022 keeps Oxigraph types behind an internal adapter and
+requires another health review on dependency updates.
 
 `json-syntax` 0.12.5 directly depends on `smallstr` 0.3. RustSec advisory
 [RUSTSEC-2026-0215](https://rustsec.org/advisories/RUSTSEC-2026-0215.html)

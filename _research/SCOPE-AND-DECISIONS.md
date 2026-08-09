@@ -67,9 +67,8 @@ arrays do not imply order, and equivalent compacted documents may serialize
 differently. Full IRIs are internal identity.
 
 The parser implements only the JSON-LD operations required by the CXF profile
-and accepted producer corpus. The production candidate is `oxjsonld` behind an
-internal adapter. `W-024` proves the minimal boundary before W-003 performs
-CXF-focused corpus work.
+and accepted producer corpus. D-022 qualifies `oxjsonld` behind an internal
+adapter for private CXF ingestion; production-release adoption remains open.
 
 Evidence:
 
@@ -227,17 +226,16 @@ publication automation and must call that policy against the release ref before
 publishing. Until W-023 implements that dependency, automated publication is out
 of scope.
 
-### D-018: qualify Serde and OxJSONLD for private development
+### D-018: qualify Serde and permit guarded OxJSONLD evaluation
 
 W-024 passed Rust 1.97.1 native and WASM builds, exact dependency allowlists,
 local advisory/license policy, PR CI, and clean reviews. Use `serde` and
 `serde_json` for ordinary JSON plus owned DTO boundaries during private
 development.
 
-`oxjsonld` and `oxrdf` remain isolated behind the internal adapter and are
-qualified for private-development CXF ingestion under D-022. This is not final
-production processor adoption. Production-release dependency adoption remains
-gated by W-023's release-policy integration.
+W-024 permitted `oxjsonld` and `oxrdf` only for guarded W-003 evaluation. D-022
+now governs their private-development CXF use. This is not final production
+processor adoption; W-023 retains the production-release gate.
 
 ### D-019: the library is a purpose-built CXF parser
 
