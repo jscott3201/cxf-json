@@ -217,10 +217,10 @@ feature unification; otherwise renewal requires another owner ruling.
 Pull requests run formatting, Clippy, native tests for both feature sets, WASM
 builds for both feature sets, and exact versioned WASM dependency allowlists.
 Dependency advisory and license tools run locally during development and in a
-reusable/manual policy workflow, not on every pull request. The governed Release
-workflow audits the requested existing tag first and creates the GitHub release
-only after policy passes. Direct release publication outside that workflow is
-not permitted.
+reusable/manual policy workflow, not on every pull request. W-023 owns release
+publication automation and must call that policy against the release ref before
+publishing. Until W-023 implements that dependency, automated publication is out
+of scope.
 
 ## Provisional decisions
 

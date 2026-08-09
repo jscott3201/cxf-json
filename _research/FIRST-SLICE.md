@@ -134,10 +134,10 @@ Required cases:
    deterministic unsupported/policy result.
 9. The evidence report records exact versions from `Cargo.lock`, feature graph,
    duplicate crates, licenses, local RustSec results, repository-health snapshot,
-   successful PR native/WASM CI, build commands, and unresolved gaps. The manual
-   Release workflow reruns heavy advisory and license policy against the requested
-   tag and publishes only after it passes. Only then can a candidate become an
-   adopted production dependency.
+   successful PR native/WASM CI, build commands, and unresolved gaps. The
+   reusable/manual release-policy workflow reruns heavy advisory and license
+   checks against an explicit ref. W-023 must make publication depend on it.
+   Only then can a candidate become an adopted production dependency.
 
 ## Decisions this slice can make
 
