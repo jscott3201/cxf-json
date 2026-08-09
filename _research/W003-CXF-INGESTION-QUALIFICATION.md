@@ -56,8 +56,9 @@ the selected CXF files to match the named origin, `git ls-files`, the requested
 commit, and a clean scoped worktree both before and after parsing. Nonstandard
 index flags such as `assume-unchanged` and `skip-worktree` are rejected. Git runs
 with repository-redirection environment variables removed and
-`GIT_OPTIONAL_LOCKS=0`, so checks use the supplied checkout without refreshing
-its index.
+system/global configuration disabled. The command pins `core.worktree`, disables
+fsmonitor and untracked-index shortcuts, and uses `GIT_OPTIONAL_LOCKS=0`, so
+checks use the supplied checkout without refreshing its index.
 
 The harness is an example target in the unpublished probe crate. It is not a
 product CLI or public API.

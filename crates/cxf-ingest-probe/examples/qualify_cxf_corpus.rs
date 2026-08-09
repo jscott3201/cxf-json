@@ -344,6 +344,7 @@ fn git_output<const N: usize>(repository: &Path, arguments: [&str; N]) -> Result
 
 fn git_command(repository: &Path) -> Command {
     let mut command = Command::new("git");
+    let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
     command
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
@@ -355,7 +356,21 @@ fn git_command(repository: &Path) -> Command {
         .env_remove("GIT_PREFIX")
         .env_remove("GIT_CONFIG_PARAMETERS")
         .env_remove("GIT_CONFIG_COUNT")
+        .env_remove("GIT_CONFIG_SYSTEM")
+        .env_remove("GIT_CONFIG_GLOBAL")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", null_config)
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("-c")
+        .arg(format!("core.worktree={}", repository.display()))
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
+            "-c",
+            "core.preloadIndex=false",
+        ])
         .arg("-C")
         .arg(repository);
     command
