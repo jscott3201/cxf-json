@@ -146,9 +146,9 @@ Evidence:
 
 ### D-010: Rust 1.97.1 is the project toolchain
 
-W-024 will configure the workspace, local toolchain file, and CI to use Rust
-1.97.1. Direct dependencies must declare an MSRV no newer than 1.97.1. A later
-toolchain change requires a new owner ruling and target-matrix verification.
+W-024 configured the workspace, local toolchain file, and CI to use Rust 1.97.1.
+Direct dependencies must declare an MSRV no newer than 1.97.1. A later toolchain
+change requires a new owner ruling and target-matrix verification.
 
 Local verification on 2026-08-09:
 

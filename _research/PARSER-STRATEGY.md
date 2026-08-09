@@ -107,7 +107,8 @@ Remote loading is disabled unless the caller installs a bounded loader.
 
 Index known blocks, connectors, parameters, constants, instances, connections,
 types, values, units, arrays, expressions, graphics, and FMU references. Keep
-unknown terms in the graph and expose them through an extension API.
+unknown terms in the private graph and project them into CXF extension records.
+Do not expose processor or RDF graph types.
 
 ### 5. Profile validation
 

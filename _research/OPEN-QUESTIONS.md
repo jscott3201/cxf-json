@@ -11,6 +11,8 @@ Resolved by D-019: the project does not offer full general-purpose JSON-LD
 support. It implements and tests the JSON-LD operations needed to parse CXF and
 the accepted producer corpus. W-003 records that CXF-specific operation matrix
 against the [JSON-LD 1.1 API](https://www.w3.org/TR/json-ld11-api/).
+The product boundary is decided; the implementation evidence remains open under
+W-003.
 
 ### OQ-002: Which CXF authority defines the first strict profile?
 

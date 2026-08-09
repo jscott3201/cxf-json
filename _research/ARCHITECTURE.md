@@ -36,7 +36,7 @@ bytes
   -> retained source plus Serde syntax/DTO boundary
   -> private OxJSONLD context processing and RDF conversion
   -> private graph indexes by full IRI
-  -> typed CXF projection plus preserved unknown triples
+  -> typed CXF projection plus CXF extension records
   -> versioned profile diagnostics
   -> Rust / Python / JavaScript DTO conversion
 ```
@@ -54,11 +54,12 @@ This is illustrative, not a committed API.
 pub fn parse_cxf_bytes(
     input: &[u8],
     options: &ParseOptions,
-) -> Result<ParsedDocument, ParseFailure>;
+) -> Result<ParsedCxfDocument, ParseFailure>;
 
-pub struct ParsedDocument {
+pub struct ParsedCxfDocument {
     pub source: SourceDocument,
     pub cxf: CxfProjection,
+    pub extensions: Vec<CxfExtension>,
     pub validation: ValidationReport,
 }
 ```
@@ -94,7 +95,9 @@ equivalence.
 
 Unknown classes, predicates, and values remain queryable through CXF extension
 records. A closed Rust enum may represent known CXF roles, while extension
-records retain original RDF terms without exposing a general graph API.
+records associate an unknown term and value with its CXF entity. W-013 owns the
+concrete record schema. The schema must retain original full IRIs without
+exposing a general graph API.
 
 ## Loader boundary
 
