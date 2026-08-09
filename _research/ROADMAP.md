@@ -63,7 +63,7 @@ public environments.
 | W-020 | Version and support policy | Planned | Rust is fixed at 1.97.1; Python versions, OS/architectures, browsers, Node, and profile compatibility are documented and tested |
 | W-021 | Supply-chain and license inventory | Planned | Cargo, wheel, npm, upstream fixture, generated-artifact, and `MIT OR Apache-2.0` obligations are recorded |
 | W-022 | Performance baseline | Planned | Corpus latency, throughput, peak memory, allocation, adapter conversion cost, and WASM size are reproducible |
-| W-023 | Release automation | Planned | Rust crates, wheels, and npm artifacts are built from tags, tested after packaging, checksummed, and provenance-attested |
+| W-023 | Release automation | Planned | Rust crates, wheels, and npm artifacts are built from tags, tested after packaging, dependency-policy checked, checksummed, and provenance-attested |
 | W-025 | Public-release readiness and visibility change | Planned | OQ-013 stability gate is met, both license texts and notices are verified, `_research/results/W-025-history-audit.md` covers every reachable commit/tag/ref under D-015, and the owner explicitly approves changing the GitHub repository to public |
 
 ## Risk register

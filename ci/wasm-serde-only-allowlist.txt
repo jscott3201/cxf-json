@@ -1,12 +1,12 @@
-cxf-ingest-probe
-itoa
-memchr
-proc-macro2
-quote
-serde
-serde_core
-serde_derive
-serde_json
-syn
-unicode-ident
-zmij
+cxf-ingest-probe v0.0.0
+itoa v1.0.18
+memchr v2.8.3
+proc-macro2 v1.0.107
+quote v1.0.47
+serde v1.0.229
+serde_core v1.0.229
+serde_derive v1.0.229
+serde_json v1.0.151
+syn v3.0.3
+unicode-ident v1.0.24
+zmij v1.0.23

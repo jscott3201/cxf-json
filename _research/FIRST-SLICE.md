@@ -71,7 +71,8 @@ first.
 
 - Root workspace with resolver 2, edition 2024, and `rust-version = "1.97.1"`.
 - `rust-toolchain.toml` pinned to 1.97.1.
-- Private GitHub repository CI for native tests and the WASM compile gate.
+- Private GitHub PR CI for native tests and the WASM compile gate; dependency
+  advisory/license installation runs locally and in the release workflow.
 - `LICENSE-MIT`, `LICENSE-APACHE`, and Cargo metadata `MIT OR Apache-2.0`;
   repository visibility remains private.
 - One `publish = false` crate: `crates/cxf-ingest-probe`.
@@ -132,9 +133,10 @@ Required cases:
 8. A remote-context fixture cannot perform network access and returns a
    deterministic unsupported/policy result.
 9. The evidence report records exact versions from `Cargo.lock`, feature graph,
-   duplicate crates, licenses, RustSec results, repository-health snapshot,
-   successful CI run, build commands, and unresolved gaps. Only then can a
-   candidate become an adopted production dependency.
+   duplicate crates, licenses, local RustSec results, repository-health snapshot,
+   successful PR native/WASM CI, build commands, and unresolved gaps. Release CI
+   reruns the heavy advisory and license policy before publication. Only then can
+   a candidate become an adopted production dependency.
 
 ## Decisions this slice can make
 

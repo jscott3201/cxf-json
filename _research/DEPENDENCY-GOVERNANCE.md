@@ -76,7 +76,8 @@ It remains research evidence only.
 ## Adoption outcomes
 
 - `serde` and `serde_json`: approved candidates for W-024. Final adoption occurs
-  when the committed lockfile, target CI, licenses, features, and advisories pass.
+  when the committed lockfile, PR target CI, local policy checks, licenses,
+  features, and advisories pass. The release workflow reruns heavy policy checks.
 - `oxjsonld` and `oxrdf`: guarded W-024 candidates. They are not approved
   production dependencies yet. The owner explicitly approved this guarded probe
   on 2026-08-09 despite the contributor-concentration risk.

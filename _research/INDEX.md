@@ -82,5 +82,6 @@ work also remains in Backlog.
 
 Private repository:
 [jscott3201/modelica-json-rust](https://github.com/jscott3201/modelica-json-rust).
-No commit has been pushed. D-013 keeps it private until the stability gate is
-defined and met, then releases it under `MIT OR Apache-2.0`.
+PR [#1](https://github.com/jscott3201/modelica-json-rust/pull/1) carries W-024.
+D-013 keeps the repository private until the stability gate is defined and met,
+then releases it under `MIT OR Apache-2.0`.

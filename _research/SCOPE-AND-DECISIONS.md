@@ -212,6 +212,14 @@ The exception expires when W-003 completes or before the first public release,
 whichever comes first. Re-review must remove it if OxRDF no longer needs direct
 feature unification; otherwise renewal requires another owner ruling.
 
+### D-017: PR CI stays fast; heavy policy runs on releases
+
+Pull requests run formatting, Clippy, native tests for both feature sets, WASM
+builds for both feature sets, and exact versioned WASM dependency allowlists.
+Dependency advisory and license tools run locally during development and in a
+release/manual workflow, not on every pull request. Release publication must not
+proceed when that policy workflow fails.
+
 ## Provisional decisions
 
 These require spikes before adoption:
