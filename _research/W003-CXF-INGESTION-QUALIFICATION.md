@@ -51,10 +51,12 @@ command arguments. Any new or changed failure, unexpected success, read failure,
 symlink root or discovered symlink entry, or non-UTF-8 path makes the command
 fail. Explicit roots are canonicalized after the root check. The harness performs
 no discovery outside those canonical roots and follows no network references.
-For external evidence, `--git-root` and `--git-commit` require the selected CXF
-files to match `git ls-files`, the requested commit, and a clean scoped worktree
-both before and after parsing. Git runs with `GIT_OPTIONAL_LOCKS=0` so status and
-index reads do not refresh the sibling repository's index.
+For external evidence, `--git-root`, `--git-origin`, and `--git-commit` require
+the selected CXF files to match the named origin, `git ls-files`, the requested
+commit, and a clean scoped worktree both before and after parsing. Nonstandard
+index flags such as `assume-unchanged` and `skip-worktree` are rejected. Git runs
+with `GIT_OPTIONAL_LOCKS=0` so status and index reads do not refresh the sibling
+repository's index.
 
 The harness is an example target in the unpublished probe crate. It is not a
 product CLI or public API.

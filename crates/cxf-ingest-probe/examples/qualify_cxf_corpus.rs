@@ -33,6 +33,7 @@ enum FileFailure {
 #[derive(Debug, Serialize)]
 struct CorpusReport {
     git_root: Option<String>,
+    git_origin: Option<String>,
     git_commit: Option<String>,
     files: Vec<FileReport>,
     file_count: usize,
@@ -84,6 +85,7 @@ fn qualify(arguments: impl IntoIterator<Item = OsString>) -> Result<CorpusReport
     let mut expected_failures = Vec::new();
     let mut roots = Vec::new();
     let mut git_root = None;
+    let mut git_origin = None;
     let mut git_commit = None;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -109,6 +111,11 @@ fn qualify(arguments: impl IntoIterator<Item = OsString>) -> Result<CorpusReport
                 .next()
                 .ok_or_else(|| "--git-commit requires a commit ID".to_owned())?;
             git_commit = Some(commit.to_string_lossy().into_owned());
+        } else if argument == "--git-origin" {
+            let origin = arguments
+                .next()
+                .ok_or_else(|| "--git-origin requires a remote URL".to_owned())?;
+            git_origin = Some(origin.to_string_lossy().into_owned());
         } else if argument.to_string_lossy().starts_with("--") {
             return Err(format!("unknown option {}", argument.to_string_lossy()));
         } else {
@@ -117,7 +124,7 @@ fn qualify(arguments: impl IntoIterator<Item = OsString>) -> Result<CorpusReport
     }
     if roots.is_empty() {
         return Err("usage: qualify_cxf_corpus \
-             [--git-root <repo> --git-commit <commit>] \
+             [--git-root <repo> --git-origin <url> --git-commit <commit>] \
              [--expect-failure <file> <exact-message>] <file-or-directory>..."
             .to_owned());
     }
@@ -155,15 +162,19 @@ fn qualify(arguments: impl IntoIterator<Item = OsString>) -> Result<CorpusReport
         }
     }
 
-    let git = match (git_root, git_commit) {
-        (Some(root), Some(commit)) => {
+    let git = match (git_root, git_origin, git_commit) {
+        (Some(root), Some(origin), Some(commit)) => {
             reject_symlink_components(&root)?;
             let root = canonicalize(&root)?;
-            verify_git_corpus(&root, &commit, &canonical_roots, &paths)?;
-            Some((root, commit))
+            verify_git_corpus(&root, &origin, &commit, &canonical_roots, &paths)?;
+            Some((root, origin, commit))
         }
-        (None, None) => None,
-        _ => return Err("--git-root and --git-commit must be used together".to_owned()),
+        (None, None, None) => None,
+        _ => {
+            return Err(
+                "--git-root, --git-origin, and --git-commit must be used together".to_owned(),
+            );
+        }
     };
 
     let mut files = Vec::with_capacity(paths.len());
@@ -199,14 +210,15 @@ fn qualify(arguments: impl IntoIterator<Item = OsString>) -> Result<CorpusReport
         .count();
     let input_bytes = files.iter().filter_map(|file| file.input_bytes).sum();
     let quad_count = files.iter().filter_map(|file| file.quad_count).sum();
-    if let Some((root, commit)) = &git {
-        verify_git_corpus(root, commit, &canonical_roots, &paths)?;
+    if let Some((root, origin, commit)) = &git {
+        verify_git_corpus(root, origin, commit, &canonical_roots, &paths)?;
     }
     let report = CorpusReport {
         git_root: git
             .as_ref()
-            .map(|(root, _)| root.to_string_lossy().into_owned()),
-        git_commit: git.as_ref().map(|(_, commit)| commit.clone()),
+            .map(|(root, _, _)| root.to_string_lossy().into_owned()),
+        git_origin: git.as_ref().map(|(_, origin, _)| origin.clone()),
+        git_commit: git.as_ref().map(|(_, _, commit)| commit.clone()),
         file_count: files.len(),
         passed,
         expected_failures,
@@ -247,10 +259,18 @@ fn reject_symlink_components(path: &Path) -> Result<(), String> {
 
 fn verify_git_corpus(
     repository: &Path,
+    expected_origin: &str,
     expected_commit: &str,
     roots: &[PathBuf],
     paths: &[PathBuf],
 ) -> Result<(), String> {
+    let actual_origin = git_output(repository, ["remote", "get-url", "origin"])?;
+    if actual_origin.trim() != expected_origin {
+        return Err(format!(
+            "Git corpus origin mismatch: expected {expected_origin}, got {}",
+            actual_origin.trim()
+        ));
+    }
     let actual_commit = git_output(repository, ["rev-parse", "HEAD"])?;
     if actual_commit.trim() != expected_commit {
         return Err(format!(
@@ -281,13 +301,24 @@ fn verify_git_corpus(
     }
 
     let mut tracked = git_command(repository);
-    tracked.args(["ls-files", "-z", "--"]).args(&relative_roots);
+    tracked
+        .args(["ls-files", "-v", "-z", "--"])
+        .args(&relative_roots);
     let tracked = command_bytes(tracked, "git ls-files")?;
     let tracked = tracked
         .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-        .map(|path| {
-            let path = str::from_utf8(path)
+        .filter(|record| !record.is_empty())
+        .map(|record| {
+            if record.len() < 3 || record[1] != b' ' {
+                return Err("git ls-files returned an invalid record".to_owned());
+            }
+            if record[0] != b'H' {
+                return Err(format!(
+                    "Git corpus path has unsupported index flag {}",
+                    char::from(record[0])
+                ));
+            }
+            let path = str::from_utf8(&record[2..])
                 .map_err(|_| "Git corpus contains a non-UTF-8 tracked path".to_owned())?;
             Ok(repository.join(path))
         })
