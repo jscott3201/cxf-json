@@ -1,0 +1,11 @@
+{
+  "integer": 1,
+  "decimal": 1.0,
+  "exponent": 1e+02,
+  "negative_zero": -0,
+  "large_integer": 123456789012345678901234567890,
+  "long_fraction": 0.123456789012345678901234567890,
+  "é": {
+    "a/b~c": 7
+  }
+}

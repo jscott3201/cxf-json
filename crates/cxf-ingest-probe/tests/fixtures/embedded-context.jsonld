@@ -1,0 +1,24 @@
+{
+  "@context": {
+    "ex": "https://example.test/",
+    "count": {
+      "@id": "ex:count",
+      "@type": "http://www.w3.org/2001/XMLSchema#integer"
+    },
+    "label": "ex:label",
+    "link": {
+      "@id": "ex:link",
+      "@type": "@id"
+    },
+    "name": {
+      "@id": "ex:name",
+      "@language": "en"
+    }
+  },
+  "@id": "ex:subject",
+  "count": 7,
+  "label": "alpha",
+  "link": "ex:target",
+  "name": "example",
+  "ex:unknown": "kept"
+}

@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Rust 1.97.1
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
+      - name: Check formatting
+        run: cargo +1.97.1 fmt --all --check
+      - name: Lint
+        run: cargo +1.97.1 clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Test all features
+        run: cargo +1.97.1 test --workspace --all-features --locked
+      - name: Test Serde-only feature set
+        run: cargo +1.97.1 test --workspace --no-default-features --locked
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Rust 1.97.1 with WASM target
+        run: rustup toolchain install 1.97.1 --profile minimal --target wasm32-unknown-unknown
+      - name: Build WASM target with Oxigraph
+        run: cargo +1.97.1 build --workspace --all-features --locked --target wasm32-unknown-unknown
+      - name: Build Serde-only WASM target
+        run: cargo +1.97.1 build --workspace --no-default-features --locked --target wasm32-unknown-unknown
+      - name: Enforce WASM dependency allowlists
+        run: |
+          all_features="${RUNNER_TEMP}/wasm-all-features.txt"
+          cargo +1.97.1 tree --workspace --all-features --locked \
+            --target wasm32-unknown-unknown --prefix none \
+            | cut -d ' ' -f1 | sort -u > "${all_features}"
+          diff -u ci/wasm-all-features-allowlist.txt "${all_features}"
+
+          serde_only="${RUNNER_TEMP}/wasm-serde-only.txt"
+          cargo +1.97.1 tree --workspace --no-default-features --locked \
+            --target wasm32-unknown-unknown --prefix none \
+            | cut -d ' ' -f1 | sort -u > "${serde_only}"
+          diff -u ci/wasm-serde-only-allowlist.txt "${serde_only}"
+
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Rust 1.97.1
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: Install dependency policy tools
+        run: |
+          cargo +1.97.1 install cargo-audit --version 0.22.1 --locked
+          cargo +1.97.1 install cargo-deny --version 0.19.0 --locked
+      - name: Audit advisories
+        run: cargo +1.97.1 audit
+      - name: Check licenses, bans, and sources
+        run: cargo +1.97.1 deny check

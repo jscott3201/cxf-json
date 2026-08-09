@@ -1,0 +1,20 @@
+[package]
+name = "cxf-ingest-probe"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = ["oxigraph"]
+oxigraph = ["dep:getrandom", "dep:oxjsonld", "dep:oxrdf"]
+
+[dependencies]
+oxjsonld = { workspace = true, optional = true }
+oxrdf = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+
+[target.wasm32-unknown-unknown.dependencies]
+getrandom = { version = "0.3.4", features = ["wasm_js"], optional = true }

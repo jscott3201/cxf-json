@@ -1,0 +1,5 @@
+{
+  "@context": "https://example.test/context.jsonld",
+  "@id": "https://example.test/subject",
+  "label": "alpha"
+}
