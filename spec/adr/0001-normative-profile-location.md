@@ -23,7 +23,8 @@ the first behavior-bearing profile. The process is defined in `spec/README.md`.
 
 ## Consequences
 
-- `_research/` remains evidence and rationale rather than a second specification.
+- The Git-ignored `_research/` directory remains local evidence and rationale
+  rather than a second specification.
 - Policy requires implementation changes that affect diagnostics or compatibility
   boundaries to update them explicitly; automated enforcement starts before
   profile 0.1.0.
