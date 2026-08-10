@@ -327,6 +327,19 @@ provenance bucket, complete literal notices and hashes, generated-source and
 generator lineage where applicable, artifact inclusion rules, and D-015 history
 analysis. OBC content additionally needs explicit permission or legal clearance.
 
+### D-025: the normative profile lives in `spec/`
+
+`spec/PROFILE.md` is the versioned source-of-truth location for observable
+behavior after M0. ADRs in `spec/adr/` record decisions and rationale but do not
+independently define observable behavior; `_research/` remains evidence and
+candidate rationale. Research decisions about observable behavior do not become
+normative until a reviewed pull request promotes them into the profile, records
+compatibility impact, updates the profile version, and adds enforcing tests. CI
+enforcement is required before the first behavior-bearing profile.
+`spec/README.md` defines the change process. ADR 0001 records this owner
+governance decision and resolves OQ-012 without deciding the strict CXF authority
+in OQ-002.
+
 ## Provisional decisions
 
 The remaining proposals require spikes before adoption. Superseded entries stay

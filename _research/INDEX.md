@@ -1,16 +1,17 @@
 # modelica-json-rust research index
 
-Status: research baseline, 2026-08-09. This corpus is non-normative until the
-project adopts a specification and decision process.
+Status updated 2026-08-10 UTC: M0 research baseline complete. This corpus remains
+evidence and rationale; the normative project profile lives in `../spec/`.
 
 ## Current verdict
 
-Build a purpose-built CXF parser, not a general JSON, JSON-LD, RDF, Modelica, or
-CDL parser. JSON-LD expansion and RDF identity are internal mechanisms required
-to interpret CXF. The public contract returns CXF values and CXF diagnostics,
-retains submitted bytes and available parser locations, rejects duplicate decoded
-member names, and preserves unknown CXF extension terms without exposing a
-general RDF toolkit.
+The selected direction is a purpose-built CXF parser, not a general JSON,
+JSON-LD, RDF, Modelica, or CDL parser. JSON-LD expansion and RDF identity are
+candidate internal mechanisms required to interpret CXF. The candidate public
+contract returns CXF values and CXF diagnostics, retains submitted bytes and
+available parser locations, rejects duplicate decoded member names, and preserves
+unknown CXF extension terms without exposing a general RDF toolkit. These rules
+remain non-normative until promoted into `../spec/PROFILE.md`.
 
 Do not use pest for the CXF input. A PEG grammar would replace an established
 JSON parser without handling JSON-LD expansion or CXF graph semantics. Keep
@@ -28,6 +29,8 @@ parent repositories do not meet the owner-established community threshold.
 
 | File | Purpose |
 |---|---|
+| [../spec/PROFILE.md](../spec/PROFILE.md) | Versioned normative behavior profile |
+| [../spec/adr/](../spec/adr/) | Accepted architecture decisions and compatibility impact |
 | [SCOPE-AND-DECISIONS.md](SCOPE-AND-DECISIONS.md) | Scope, current research conclusions, and explicit non-goals |
 | [UPSTREAM-CXF.md](UPSTREAM-CXF.md) | Pinned `modelica-json` and OBC CXF behavior |
 | [PARSER-STRATEGY.md](PARSER-STRATEGY.md) | Parser comparison, JSON-LD boundary, and validation layers |
@@ -83,8 +86,10 @@ Folder: **Modelica JSON Rust** in the Aionforge Labs workspace.
 | [MJR Defects](https://aionforgelabs.monday.com/boards/18425770675) | Observed implementation defect classes |
 | [MJR Spec](https://aionforgelabs.monday.com/boards/18425770674) | Research documents, decisions, open questions, and compatibility findings |
 
-W-024, W-003, and W-004 are complete. W-005 is active. W-008 and W-009 remain
-queued in Backlog. Other planned work also remains in Backlog.
+Repository and GitHub state show M0 complete: W-024, W-003, W-004, and W-005 are
+done, and D-025 resolves the OQ-012 governance gate. The Monday projection remains
+pending at closeout. W-008 and W-009 remain queued in Backlog. Other planned work
+also remains in Backlog.
 
 Private repository:
 [jscott3201/modelica-json-rust](https://github.com/jscott3201/modelica-json-rust).
@@ -96,5 +101,7 @@ PR [#3](https://github.com/jscott3201/modelica-json-rust/pull/3) merged W-003 as
 `b16061004683c186777a6d7fb87455bde2454834`.
 PR [#5](https://github.com/jscott3201/modelica-json-rust/pull/5) merged W-004 as
 `268b36186fa9df1be3e1103535d8ccce260e40b2`.
+PR [#7](https://github.com/jscott3201/modelica-json-rust/pull/7) merged W-005 as
+`fd489e914e60890448275cf10d26c758534a80c6` and completed the M0 work items.
 D-013 keeps the repository private until the stability gate is defined and met,
 then releases it under `MIT OR Apache-2.0`.

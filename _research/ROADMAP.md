@@ -1,7 +1,8 @@
 # Research and implementation roadmap
 
 This roadmap sequences evidence before dependency lock-in. Dates and effort are
-unset. Monday owns status and ranking; this file owns acceptance criteria.
+unset. Monday owns ranking and mirrors delivery status; this file owns acceptance
+criteria and records repository-observed completion.
 
 ## M0: research baseline
 
@@ -12,11 +13,15 @@ unset. Monday owns status and ranking; this file owns acceptance criteria.
 | W-024 | Serde/OxJSONLD ingestion boundary | Done, PR #1 | Rust 1.97.1 probe passes `FIRST-SLICE.md`: Serde DTO/syntax evidence, guarded OxJSONLD RDF conversion, owned fixtures, offline behavior, WASM compile, and dependency-health record |
 | W-003 | CXF JSON-LD ingestion qualification | Done, PR #3 | Owned CXF operations pass natively and in Node-executed WASM; Git-pinned Open Control Engine evidence covers 162 local and 44 vendored files; D-020 through D-022 record the outcome |
 | W-004 | Source-fidelity contract | Done, PR #5 | Reject duplicate decoded names; retain submitted bytes; define byte locations and independent optional pointer/RDF-term evidence without a source mapper or dependency that fails D-011 |
-| W-005 | License and fixture-use review | In progress | D-024 keeps v1 repository/CI/package fixtures project-authored; external bytes are optional pinned local read-only evidence, never copied, transformed, or fetched by tests |
+| W-005 | License and fixture-use review | Done, PR #7 | D-024 keeps v1 repository/CI/package fixtures project-authored; external bytes are optional pinned local read-only evidence, never copied, transformed, or fetched by tests |
 
-M0 exits when W-024, W-003, W-004, and W-005 are complete; `D-P01` and `D-P02`
-are replaced by adopted decisions; fixture provenance is clear; and one
-dependency-approved processor passes native plus WASM.
+Repository and GitHub state show M0 complete: W-024, W-003, W-004, and W-005 are
+done; `D-P01` and `D-P02` are superseded by adopted decisions; fixture provenance
+is recorded; the guarded processor passes native and WASM qualification for
+private development; and D-025 resolves OQ-012 with a versioned profile and ADR
+process under `spec/`. The Monday projection remains pending at closeout.
+Profile version 0.0.0 carries no product-readiness or conformance claim; later
+work must promote behavior before implementing it as a public contract.
 
 ## M1: core ingestion
 

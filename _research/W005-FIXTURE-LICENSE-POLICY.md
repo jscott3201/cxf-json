@@ -1,7 +1,6 @@
 # W-005: Fixture license and use policy
 
-Status: implementation complete on `w005-fixture-policy`; PR #7 review and merge
-are pending.
+Status: complete. PR #7 merged as `fd489e9`.
 
 ## Purpose
 
