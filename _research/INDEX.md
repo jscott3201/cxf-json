@@ -87,8 +87,8 @@ Folder: **Modelica JSON Rust** in the Aionforge Labs workspace.
 | [MJR Spec](https://aionforgelabs.monday.com/boards/18425770674) | Research documents, decisions, open questions, and compatibility findings |
 
 Repository and GitHub state show M0 complete: W-024, W-003, W-004, and W-005 are
-done, and D-025 resolves the OQ-012 governance gate. The Monday projection remains
-pending at closeout. W-008 and W-009 remain queued in Backlog. Other planned work
+done, and D-025 resolves the OQ-012 governance gate. Monday is synchronized through
+the PR #8 closeout. W-008 and W-009 remain queued in Backlog. Other planned work
 also remains in Backlog.
 
 Private repository:
