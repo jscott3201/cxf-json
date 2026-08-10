@@ -1,11 +1,15 @@
 import { readFile } from "node:fs/promises";
-import { createHash, webcrypto } from "node:crypto";
+import { createHash, randomUUID, webcrypto } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 const wasmPath = process.argv[2];
 const reportMetrics = process.argv.includes("--metrics");
+const instrumentationRevision = process.env.CXF_BENCHMARK_REVISION;
 if (!wasmPath) {
   throw new Error("usage: node ci/run-wasm-smoke.mjs <module.wasm> [--metrics]");
+}
+if (reportMetrics && !/^[0-9a-f]{40}$/.test(instrumentationRevision ?? "")) {
+  throw new Error("--metrics requires CXF_BENCHMARK_REVISION as a 40-digit commit ID");
 }
 
 const bytes = await readFile(wasmPath);
@@ -54,6 +58,8 @@ if (reportMetrics) {
   console.log(
     JSON.stringify(
       {
+        run_id: randomUUID(),
+        instrumentation_revision: instrumentationRevision,
         node: process.version,
         platform: process.platform,
         architecture: process.arch,

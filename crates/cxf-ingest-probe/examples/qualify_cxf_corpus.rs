@@ -5,9 +5,9 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    process::{Command, ExitCode},
+    process::{self, Command, ExitCode},
     str,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use cxf_ingest_probe::{ProbeDiagnostic, ProbeMetrics, measure_json_ld};
@@ -41,6 +41,8 @@ enum FileFailure {
 
 #[derive(Debug, Serialize)]
 struct CorpusReport {
+    run_id: String,
+    instrumentation_revision: Option<&'static str>,
     git_root: Option<String>,
     git_origin_matches_expected: bool,
     git_commit: Option<String>,
@@ -101,6 +103,10 @@ impl CorpusReport {
 
 fn qualify(arguments: impl IntoIterator<Item = OsString>) -> Result<CorpusReport, String> {
     let started = Instant::now();
+    let started_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before the Unix epoch: {error}"))?;
+    let run_id = format!("{:x}-{:x}", started_at.as_nanos(), process::id());
     let mut expected_failures = Vec::new();
     let mut roots = Vec::new();
     let mut git_root = None;
@@ -282,6 +288,8 @@ fn qualify(arguments: impl IntoIterator<Item = OsString>) -> Result<CorpusReport
         verify_git_corpus(root, origin, commit, &canonical_roots, &paths)?;
     }
     let report = CorpusReport {
+        run_id,
+        instrumentation_revision: option_env!("CXF_BENCHMARK_REVISION"),
         git_root: git
             .as_ref()
             .map(|(root, _, _)| root.to_string_lossy().into_owned()),

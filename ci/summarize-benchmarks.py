@@ -33,9 +33,22 @@ def stable_value(reports, field):
     return reports[0][field]
 
 
-def validate_report_count(reports):
+def validate_reports(reports):
     if len(reports) != 5:
         fail("exactly five reports are required")
+    run_ids = [report["run_id"] for report in reports]
+    if len(set(run_ids)) != len(run_ids):
+        fail("run IDs must be unique")
+    revision = stable_value(reports, "instrumentation_revision")
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        fail("instrumentation_revision is not a 40-digit commit ID")
+    return revision
+
+
+def validate_unique_paths(paths, kind):
+    resolved = [Path(path).resolve() for path in paths]
+    if len(set(resolved)) != len(resolved):
+        fail(f"{kind} paths must be unique")
 
 
 def validate_time_pairs(report_paths, time_paths):
@@ -50,18 +63,22 @@ def file_identity(report):
             "path": file["path"],
             "expected_failure": file["expected_failure"],
             "input_bytes": file["input_bytes"],
-            "failure_kind": None if file["failure"] is None else file["failure"]["kind"],
+            "failure_kind": (
+                None if file["failure"] is None else file["failure"]["kind"]
+            ),
         }
         for file in report["files"]
     ]
 
 
 def summarize_corpus(reports, time_reports):
-    validate_report_count(reports)
+    instrumentation_revision = validate_reports(reports)
     if len(reports) != len(time_reports):
         fail("corpus report and time-report counts differ")
     commit = stable_value(reports, "git_commit")
-    if not commit or not all(report["git_origin_matches_expected"] for report in reports):
+    if not isinstance(commit, str) or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+        fail("git_commit is not a 40-digit commit ID")
+    if not all(report["git_origin_matches_expected"] for report in reports):
         fail("corpus reports must come from one verified Git commit")
     identities = {json.dumps(file_identity(report), sort_keys=True) for report in reports}
     if len(identities) != 1:
@@ -79,6 +96,11 @@ def summarize_corpus(reports, time_reports):
     stable_value(reports, "passed")
     stable_value(reports, "expected_failures")
 
+    combined_stage = [
+        report["preflight_micros"] + report["json_ld_micros"] for report in reports
+    ]
+    if any(elapsed == 0 for elapsed in combined_stage):
+        fail("combined stage timing is zero")
     rss = []
     for path in time_reports:
         match = rss_pattern.search(Path(path).read_text())
@@ -86,11 +108,6 @@ def summarize_corpus(reports, time_reports):
             fail(f"maximum RSS is missing from {path}")
         rss.append(int(match.group(1)))
 
-    combined_stage = [
-        report["preflight_micros"] + report["json_ld_micros"] for report in reports
-    ]
-    if any(elapsed == 0 for elapsed in combined_stage):
-        fail("combined stage timing is zero")
     throughput = [
         report["input_bytes"] / elapsed for report, elapsed in zip(reports, combined_stage)
     ]
@@ -108,6 +125,7 @@ def summarize_corpus(reports, time_reports):
 
     return {
         "runs": len(reports),
+        "instrumentation_revision": instrumentation_revision,
         "git_commit": commit,
         "structure": {field: stable_value(reports, field) for field in stable_fields},
         "rdf_term_bytes": distribution([report["rdf_term_bytes"] for report in reports]),
@@ -125,7 +143,7 @@ def summarize_corpus(reports, time_reports):
 
 
 def summarize_wasm(reports):
-    validate_report_count(reports)
+    instrumentation_revision = validate_reports(reports)
     stable_fields = [
         "node",
         "platform",
@@ -136,10 +154,13 @@ def summarize_wasm(reports):
         "final_memory_bytes",
     ]
     module_sha256 = stable_value(reports, "module_sha256")
-    if re.fullmatch(r"[0-9a-f]{64}", module_sha256) is None:
+    if not isinstance(module_sha256, str) or re.fullmatch(
+        r"[0-9a-f]{64}", module_sha256
+    ) is None:
         fail("module_sha256 is not a lowercase SHA-256 digest")
     return {
         "runs": len(reports),
+        "instrumentation_revision": instrumentation_revision,
         "environment": {field: stable_value(reports, field) for field in stable_fields[:3]},
         "module_bytes": stable_value(reports, "module_bytes"),
         "module_sha256": module_sha256,
@@ -164,7 +185,9 @@ def main():
     arguments = parser.parse_args()
 
     reports = load_json(arguments.reports)
+    validate_unique_paths(arguments.reports, "report")
     if arguments.mode == "corpus":
+        validate_unique_paths(arguments.times, "time-report")
         validate_time_pairs(arguments.reports, arguments.times)
         summary = summarize_corpus(reports, arguments.times)
     else:

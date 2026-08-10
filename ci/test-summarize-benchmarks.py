@@ -12,8 +12,10 @@ benchmarks = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(benchmarks)
 
 
-def corpus_report(commit="abc123"):
+def corpus_report(run_id, commit="b" * 40):
     return {
+        "run_id": run_id,
+        "instrumentation_revision": "a" * 40,
         "git_commit": commit,
         "git_origin_matches_expected": True,
         "files": [
@@ -46,8 +48,10 @@ def corpus_report(commit="abc123"):
     }
 
 
-def wasm_report(digest="0" * 64):
+def wasm_report(run_id, digest="0" * 64):
     return {
+        "run_id": run_id,
+        "instrumentation_revision": "a" * 40,
         "node": "v26.7.0",
         "platform": "darwin",
         "architecture": "arm64",
@@ -63,7 +67,7 @@ def wasm_report(digest="0" * 64):
 
 class SummaryTests(unittest.TestCase):
     def test_summarizes_five_pinned_corpus_runs(self):
-        reports = [corpus_report() for _ in range(5)]
+        reports = [corpus_report(str(run)) for run in range(5)]
         with tempfile.TemporaryDirectory() as directory:
             times = []
             for run in range(5):
@@ -72,25 +76,53 @@ class SummaryTests(unittest.TestCase):
                 times.append(path)
             summary = benchmarks.summarize_corpus(reports, times)
 
-        self.assertEqual(summary["git_commit"], "abc123")
+        self.assertEqual(summary["git_commit"], "b" * 40)
         self.assertEqual(summary["combined_stage_micros"]["median"], 5)
         self.assertEqual(summary["maximum_rss_bytes"]["median"], 4096)
 
     def test_rejects_mixed_corpus_commits(self):
-        reports = [corpus_report() for _ in range(4)] + [corpus_report("def456")]
+        reports = [corpus_report(str(run)) for run in range(4)]
+        reports.append(corpus_report("4", "c" * 40))
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             benchmarks.summarize_corpus(reports, ["unused"] * 5)
 
     def test_rejects_mixed_wasm_modules(self):
-        reports = [wasm_report() for _ in range(4)] + [wasm_report("1" * 64)]
+        reports = [wasm_report(str(run)) for run in range(4)]
+        reports.append(wasm_report("4", "1" * 64))
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             benchmarks.summarize_wasm(reports)
+
+    def test_requires_five_reports(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            benchmarks.summarize_wasm([wasm_report(str(run)) for run in range(4)])
+
+    def test_rejects_reused_run_ids(self):
+        reports = [wasm_report("same") for _ in range(5)]
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            benchmarks.summarize_wasm(reports)
+
+    def test_rejects_corpus_regressions(self):
+        reports = [corpus_report(str(run)) for run in range(5)]
+        reports[0]["unexpected_failures"] = 1
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            benchmarks.summarize_corpus(reports, ["unused"] * 5)
+
+    def test_rejects_zero_stage_time(self):
+        reports = [corpus_report(str(run)) for run in range(5)]
+        reports[0]["preflight_micros"] = 0
+        reports[0]["json_ld_micros"] = 0
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            benchmarks.summarize_corpus(reports, ["unused"] * 5)
 
     def test_rejects_mismatched_time_report_names(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             benchmarks.validate_time_pairs(
                 ["oce-1.json", "oce-2.json"], ["buildings-1.time", "oce-2.time"]
             )
+
+    def test_rejects_reused_report_paths(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            benchmarks.validate_unique_paths(["wasm-1.json"] * 5, "report")
 
 
 if __name__ == "__main__":

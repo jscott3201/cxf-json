@@ -37,7 +37,8 @@ jobs:
       - name: Check repository-owned benchmark corpus
         run: |
           report="${RUNNER_TEMP}/owned-corpus.json"
-          cargo +1.97.1 build --release --example qualify_cxf_corpus --locked
+          CXF_BENCHMARK_REVISION="${GITHUB_SHA}" \
+            cargo +1.97.1 build --release --example qualify_cxf_corpus --locked
           target/release/examples/qualify_cxf_corpus \
             --expect-failure crates/cxf-ingest-probe/tests/fixtures/remote-context.jsonld \
             "No LoadDocumentCallback has been set to load remote contexts" \
@@ -58,12 +59,13 @@ jobs:
         run: cargo +1.97.1 build --workspace --no-default-features --locked --target wasm32-unknown-unknown
       - name: Run CXF ingestion smoke test in Node
         run: |
-          metrics="${RUNNER_TEMP}/wasm-metrics.json"
           cargo +1.97.1 build --release --example wasm_cxf_smoke --locked --target wasm32-unknown-unknown
-          node ci/run-wasm-smoke.mjs \
-            target/wasm32-unknown-unknown/release/examples/wasm_cxf_smoke.wasm \
-            --metrics > "${metrics}"
-          python3 -c 'import json, sys; report = json.load(open(sys.argv[1])); raise SystemExit(not report["module_sha256"])' "${metrics}"
+          for run in 1 2 3 4 5; do
+            CXF_BENCHMARK_REVISION="${GITHUB_SHA}" node ci/run-wasm-smoke.mjs \
+              target/wasm32-unknown-unknown/release/examples/wasm_cxf_smoke.wasm \
+              --metrics > "${RUNNER_TEMP}/wasm-${run}.json"
+          done
+          python3 ci/summarize-benchmarks.py wasm "${RUNNER_TEMP}"/wasm-{1,2,3,4,5}.json
       - name: Enforce WASM dependency allowlists
         run: |
           all_features="${RUNNER_TEMP}/wasm-all-features.txt"
