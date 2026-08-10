@@ -30,13 +30,14 @@ Every profile version change requires one changed ADR with exactly one
 machine-readable classification: `Initial`, `Breaking`, `Additive`, or
 `Clarification`. Initial, breaking, and additive changes require enforcing tests;
 clarification tests change only when needed to preserve the clarified
-interpretation. Formatting, link, and spelling corrections with no semantic
-effect require only a reviewed pull request and no version change.
+interpretation. Whitespace-only formatting corrections may retain the current
+version. Link, spelling, and prose corrections use a `Clarification` patch because
+CI cannot prove that they leave normative meaning unchanged.
 
 CI runs `ci/check-profile-change.py`. A pull request that changes `cxf-json` public
 contract files or the delegated OxIRI behavior must also increase `PROFILE.md`,
 change profile integration tests, and add or update an ADR that records
 compatibility impact. The check validates the version bump against that
 classification, requires the first behavior-bearing version to be 0.1.0, and
-rejects version regressions. A non-semantic profile edit may keep the same version
-when no public contract file changed.
+rejects version regressions. A profile edit may keep the same version only when it
+changes whitespace and no public contract file changed.

@@ -31,6 +31,10 @@ def version_tuple(version):
     return tuple(int(part) for part in version.split("."))
 
 
+def normalized_whitespace(text):
+    return " ".join(text.split())
+
+
 def compatibility_impact(paths):
     impacts = [
         impact
@@ -155,13 +159,16 @@ if contract_changed and not profile_changed:
 if not profile_changed:
     sys.exit(0)
 
-base_version = version_tuple(profile_version(git_show(base, "spec/PROFILE.md")))
+base_profile = git_show(base, "spec/PROFILE.md")
+base_version = version_tuple(profile_version(base_profile))
 current_version = version_tuple(profile_version(profile))
 if current_version < base_version:
     fail("the profile version must not decrease")
 if current_version == base_version:
     if contract_changed:
         fail("a public contract change must increase the profile version")
+    if normalized_whitespace(profile) != normalized_whitespace(base_profile):
+        fail("a same-version profile change may alter whitespace only")
     sys.exit(0)
 if not changed_adrs:
     fail("a profile version change must add or update an ADR")
