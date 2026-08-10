@@ -35,7 +35,7 @@ enum FileFailure {
 #[derive(Debug, Serialize)]
 struct CorpusReport {
     git_root: Option<String>,
-    git_origin_verified: bool,
+    git_origin_matches_expected: bool,
     git_commit: Option<String>,
     files: Vec<FileReport>,
     file_count: usize,
@@ -222,7 +222,7 @@ fn qualify(arguments: impl IntoIterator<Item = OsString>) -> Result<CorpusReport
         git_root: git
             .as_ref()
             .map(|(root, _, _)| root.to_string_lossy().into_owned()),
-        git_origin_verified: git.is_some(),
+        git_origin_matches_expected: git.is_some(),
         git_commit: git.as_ref().map(|(_, _, commit)| commit.clone()),
         file_count: files.len(),
         passed,
@@ -277,7 +277,7 @@ fn verify_git_corpus(
     }
     let actual_origin = git_output(repository, ["remote", "get-url", "origin"])?;
     if actual_origin.trim() != expected_origin {
-        return Err("Git corpus origin does not match the approved origin".to_owned());
+        return Err("Git corpus origin does not match the expected origin".to_owned());
     }
     let actual_commit = git_output(repository, ["rev-parse", "HEAD"])?;
     if actual_commit.trim() != expected_commit {
@@ -285,6 +285,10 @@ fn verify_git_corpus(
             "Git corpus commit mismatch: expected {expected_commit}, got {}",
             actual_commit.trim()
         ));
+    }
+    let object_type = git_output(repository, ["cat-file", "-t", expected_commit])?;
+    if object_type.trim() != "commit" {
+        return Err("Git corpus commit pin does not identify a commit object".to_owned());
     }
 
     let relative_roots = roots
@@ -297,11 +301,7 @@ fn verify_git_corpus(
                     repository.display()
                 )
             })?;
-            Ok(if relative.as_os_str().is_empty() {
-                PathBuf::from(".")
-            } else {
-                relative.to_owned()
-            })
+            git_tree_path(relative)
         })
         .collect::<Result<Vec<_>, String>>()?;
     let mut tracked = git_command(repository);
@@ -582,12 +582,25 @@ fn read_git_blob(repository: &Path, commit: &str, path: &Path) -> Result<Vec<u8>
             repository.display()
         )
     })?;
-    let relative = relative
-        .to_str()
-        .ok_or_else(|| format!("non-UTF-8 path is unsupported: {}", path.display()))?;
+    let relative = git_tree_path(relative)?;
     let mut command = git_command(repository);
     command.args(["cat-file", "blob", &format!("{commit}:{relative}")]);
     command_bytes(command, "git cat-file")
+}
+
+fn git_tree_path(relative: &Path) -> Result<String, String> {
+    if relative.as_os_str().is_empty() {
+        return Ok(".".to_owned());
+    }
+    relative
+        .iter()
+        .map(|component| {
+            component
+                .to_str()
+                .ok_or_else(|| format!("non-UTF-8 path is unsupported: {}", relative.display()))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|components| components.join("/"))
 }
 
 #[cfg(test)]
@@ -691,6 +704,16 @@ mod tests {
     }
 
     #[test]
+    fn git_tree_paths_use_forward_slashes() {
+        let path = PathBuf::from("corpus").join("nested").join("input.jsonld");
+
+        assert_eq!(
+            git_tree_path(&path).expect("tree path should convert"),
+            "corpus/nested/input.jsonld"
+        );
+    }
+
+    #[test]
     fn reads_exact_blob_from_git_object_database() {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -751,6 +774,10 @@ mod tests {
             .expect("commit should resolve")
             .trim()
             .to_owned();
+        let tree = git_output(&repository, ["rev-parse", "HEAD^{tree}"])
+            .expect("tree should resolve")
+            .trim()
+            .to_owned();
         git_output(&repository, ["rm", "corpus/b.jsonld"])
             .expect("fixture deletion should be staged");
 
@@ -762,13 +789,24 @@ mod tests {
             &repository,
             "test://approved-origin",
             &commit,
-            &[root],
-            &[selected],
+            std::slice::from_ref(&root),
+            std::slice::from_ref(&selected),
         )
         .expect_err("commit-tree member omitted from the worktree should fail");
+        fs::write(repository.join(".git/HEAD"), format!("{tree}\n"))
+            .expect("HEAD should be replaced with a tree ID");
+        let object_error = verify_git_corpus(
+            &repository,
+            "test://approved-origin",
+            &tree,
+            std::slice::from_ref(&root),
+            std::slice::from_ref(&selected),
+        )
+        .expect_err("tree object should not satisfy a commit pin");
 
         fs::remove_dir_all(repository).expect("repository should be removed");
         assert!(error.contains("approved commit tree"), "{error}");
+        assert!(object_error.contains("commit object"), "{object_error}");
     }
 
     #[test]

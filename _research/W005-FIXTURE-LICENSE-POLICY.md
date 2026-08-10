@@ -1,7 +1,7 @@
 # W-005: Fixture license and use policy
 
-Status: implementation complete on `w005-fixture-policy`; PR creation, review,
-and merge are pending.
+Status: implementation complete on `w005-fixture-policy`; PR #7 review and merge
+are pending.
 
 ## Purpose
 
@@ -63,10 +63,11 @@ successful harness invocation is not approved project evidence unless its
 expected origin/commit pair is recorded by the governing work item. Exact
 expected messages are matched only in memory. Every source-derived external
 diagnostic message, range, pointer, RDF term, and read error is redacted before
-report serialization. Reports may retain paths, an origin-verification boolean,
+report serialization. Reports may retain paths, an expected-origin-match boolean,
 source-free failure stages, per-file counts and timing, expected-failure
 configuration booleans, and aggregate classification counts; the origin value is
-not serialized. Git-backed mode requires Git 2.45 or newer so
+not serialized and the match does not establish project approval. Git-backed
+mode requires Git 2.45 or newer so
 `GIT_NO_LAZY_FETCH` is enforced. Per-file SHA-256 and complete notice manifests
 become mandatory if any future exception proposes storing or distributing those
 bytes. Reading a local corpus does not decide that it may be redistributed.
