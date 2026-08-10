@@ -1,9 +1,10 @@
 # Project specification
 
-`PROFILE.md` is the location for normative behavior after M0. The `_research/`
-directory records evidence and candidate decisions but does not define
-conforming behavior. A research decision about observable behavior becomes
-normative only when a reviewed pull request promotes it into the profile.
+`PROFILE.md` is the location for normative behavior after M0. The local,
+Git-ignored `_research/` directory records evidence and candidate decisions but
+does not define conforming behavior. A research decision about observable
+behavior becomes normative only when a reviewed pull request promotes it into
+the profile.
 
 `PROFILE.md` is the sole authority for observable behavior. ADRs in `adr/` record
 decisions and rationale; they may establish governance, but an ADR does not make
