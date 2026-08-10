@@ -10,10 +10,14 @@ mod json;
 mod oxigraph;
 
 pub use dto::{
-    DiagnosticStage, ProbeDiagnostic, ProbeFailure, ProbeReport, RdfNodeKind, RdfNodeSummary,
-    RdfObjectSummary, RdfQuadSummary, SourceDocument, SourcePosition, SourceRange,
+    DiagnosticStage, JsonStructureMetrics, MeasuredProbe, ProbeDiagnostic, ProbeFailure,
+    ProbeMetrics, ProbeReport, ProbeTiming, RdfNodeKind, RdfNodeSummary, RdfObjectSummary,
+    RdfQuadSummary, SourceDocument, SourcePosition, SourceRange,
 };
 pub use json::{JsonDocument, parse_json};
 
 #[cfg(feature = "oxigraph")]
 pub use oxigraph::parse_json_ld;
+
+#[cfg(all(feature = "oxigraph", not(target_arch = "wasm32")))]
+pub use oxigraph::measure_json_ld;

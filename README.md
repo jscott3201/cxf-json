@@ -75,8 +75,14 @@ cargo +1.97.1 test --workspace --all-targets --all-features --locked
 cargo +1.97.1 test --workspace --no-default-features --locked
 ```
 
-CI also builds both feature sets for `wasm32-unknown-unknown`, runs the WASM
-smoke test in Node, and checks exact WASM dependency allowlists.
+CI also runs repository-owned corpus and aggregation checks, builds both feature
+sets for `wasm32-unknown-unknown`, exercises the Node smoke metrics path, and
+enforces exact WASM dependency allowlists.
+
+[`benchmarks.md`](benchmarks.md) records the macOS parser/process baseline,
+environment details, corpus identity, reproduction commands, and known gaps. The
+current numbers measure the evidence probe, not a production parser or release
+threshold.
 
 ## Specification
 

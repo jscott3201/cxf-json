@@ -7,11 +7,21 @@ const NAMED_GRAPH: &[u8] = include_bytes!("fixtures/named-graph.jsonld");
 const REMOTE_CONTEXT: &[u8] = include_bytes!("fixtures/remote-context.jsonld");
 
 #[test]
+fn repeated_parse_reports_match_within_process() {
+    let first = parse_json_ld(EMBEDDED_CONTEXT).expect("embedded context should parse");
+    let second = parse_json_ld(EMBEDDED_CONTEXT).expect("embedded context should parse");
+
+    assert_eq!(first, second);
+}
+
+#[test]
 fn converts_embedded_context_to_owned_rdf_summaries() {
     let report = parse_json_ld(EMBEDDED_CONTEXT).expect("embedded context should parse");
 
     assert_eq!(report.source.as_bytes(), EMBEDDED_CONTEXT);
     assert_eq!(report.quads.len(), 5);
+    assert!(report.metrics.json.max_nesting_depth >= 2);
+    assert!(report.metrics.rdf_term_bytes > 0);
     assert!(report.quads.iter().all(|quad| {
         quad.subject.kind == RdfNodeKind::Named
             && quad.subject.value == "https://example.test/subject"
@@ -105,6 +115,11 @@ fn rejects_remote_context_without_network_loader() {
     assert!(failure.diagnostic.range.is_none());
     assert_eq!(failure.diagnostic.pointer, None);
     assert_eq!(failure.diagnostic.rdf_term, None);
+    let metrics = failure
+        .metrics
+        .expect("JSON-LD failure should retain completed preflight metrics");
+    assert!(metrics.json.total_values > 0);
+    assert_eq!(metrics.rdf_term_bytes, 0);
 }
 
 #[test]
@@ -118,6 +133,7 @@ fn json_syntax_error_is_rejected_before_json_ld_processing() {
 
     assert_eq!(failure.source.as_bytes(), input);
     assert_eq!(failure.diagnostic.stage, DiagnosticStage::Json);
+    assert_eq!(failure.metrics, None);
     assert_eq!(range.start.offset, 4);
     assert_eq!(range.start.line, 1);
     assert_eq!(range.start.column, 2);

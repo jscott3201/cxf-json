@@ -1,6 +1,7 @@
 use cxf_ingest_probe::{
-    DiagnosticStage, ProbeDiagnostic, ProbeReport, RdfNodeKind, RdfNodeSummary, RdfObjectSummary,
-    RdfQuadSummary, SourceDocument, SourcePosition, SourceRange, parse_json,
+    DiagnosticStage, JsonStructureMetrics, ProbeDiagnostic, ProbeMetrics, ProbeReport, RdfNodeKind,
+    RdfNodeSummary, RdfObjectSummary, RdfQuadSummary, SourceDocument, SourcePosition, SourceRange,
+    parse_json,
 };
 
 const NUMBERS: &[u8] = include_bytes!("fixtures/numbers.json");
@@ -61,6 +62,22 @@ fn preserves_serde_private_number_token_as_an_object_name() {
     assert_eq!(
         document.value["$serde_json::private::Number"],
         "not a number"
+    );
+}
+
+#[test]
+fn reports_exact_structural_metrics() {
+    let input = br#"{"a":[1,{"\u0062":true}],"c":null}"#;
+    let document = parse_json(input).expect("structured input should parse");
+
+    assert_eq!(
+        document.metrics,
+        JsonStructureMetrics {
+            max_nesting_depth: 3,
+            max_object_members: 2,
+            total_values: 6,
+            decoded_member_name_bytes: 3,
+        }
     );
 }
 
@@ -303,6 +320,15 @@ fn owned_boundary_dto_round_trips_through_serde_json() {
             },
             graph_name: None,
         }],
+        metrics: ProbeMetrics {
+            json: JsonStructureMetrics {
+                max_nesting_depth: 2,
+                max_object_members: 4,
+                total_values: 9,
+                decoded_member_name_bytes: 42,
+            },
+            rdf_term_bytes: 128,
+        },
     };
 
     let encoded = serde_json::to_vec(&report).expect("report should serialize");

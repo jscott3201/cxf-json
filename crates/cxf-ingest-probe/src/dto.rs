@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +41,43 @@ pub struct SourceRange {
     pub end: SourcePosition,
 }
 
+/// Structural JSON measurements produced by the duplicate-name preflight.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct JsonStructureMetrics {
+    /// Maximum simultaneous open arrays and objects; a root container has depth 1.
+    pub max_nesting_depth: usize,
+    /// Maximum decoded member-name/value pairs in one object.
+    pub max_object_members: usize,
+    /// Scalars, arrays, and objects encountered, including the root value.
+    pub total_values: usize,
+    /// UTF-8 bytes in decoded object member names, counted once per occurrence.
+    pub decoded_member_name_bytes: usize,
+}
+
+/// Structural, stage-time, and retained-graph measurements for one probe run.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProbeMetrics {
+    pub json: JsonStructureMetrics,
+    /// UTF-8 bytes retained by owned RDF summary strings, including repetition.
+    pub rdf_term_bytes: usize,
+}
+
+/// Native stage timing produced only by the benchmark wrapper.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProbeTiming {
+    /// Duplicate-name preflight time, including failed preflights.
+    pub preflight: Duration,
+    /// JSON-LD/RDF stage time when preflight completed successfully.
+    pub json_ld: Option<Duration>,
+}
+
+/// Parse result paired with benchmark-only native timing.
+#[derive(Debug)]
+pub struct MeasuredProbe {
+    pub result: Result<ProbeReport, ProbeFailure>,
+    pub timing: ProbeTiming,
+}
+
 /// Processing layer that produced a diagnostic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum DiagnosticStage {
@@ -65,6 +102,7 @@ pub struct ProbeDiagnostic {
 pub struct ProbeFailure {
     pub source: SourceDocument,
     pub diagnostic: Box<ProbeDiagnostic>,
+    pub metrics: Option<Box<ProbeMetrics>>,
 }
 
 impl fmt::Display for ProbeFailure {
@@ -116,4 +154,5 @@ pub struct ProbeReport {
     pub source: SourceDocument,
     pub diagnostics: Vec<ProbeDiagnostic>,
     pub quads: Vec<RdfQuadSummary>,
+    pub metrics: ProbeMetrics,
 }
