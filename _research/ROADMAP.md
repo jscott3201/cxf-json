@@ -19,7 +19,7 @@ Repository and GitHub state show M0 complete: W-024, W-003, W-004, and W-005 are
 done; `D-P01` and `D-P02` are superseded by adopted decisions; fixture provenance
 is recorded; the guarded processor passes native and WASM qualification for
 private development; and D-025 resolves OQ-012 with a versioned profile and ADR
-process under `spec/`. The Monday projection remains pending at closeout.
+process under `spec/`. Monday is synchronized through the PR #8 closeout.
 Profile version 0.0.0 carries no product-readiness or conformance claim; later
 work must promote behavior before implementing it as a public contract.
 
