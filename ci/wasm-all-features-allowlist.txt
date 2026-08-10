@@ -1,6 +1,7 @@
 bumpalo v3.20.3
 cfg-if v1.0.4
 cxf-ingest-probe v0.0.0
+cxf-json v0.0.0
 getrandom v0.3.4
 itoa v1.0.18
 json-event-parser v0.2.3

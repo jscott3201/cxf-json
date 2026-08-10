@@ -24,12 +24,19 @@ behavior-bearing profile is the reserved 0.1.0 exception. After 0.1.0 and before
 1.0, a breaking change increments the minor version, while an additive change or
 clarification increments the patch version. Starting at 1.0, profile versions use
 `major.minor.patch`: major for breaking changes, minor for additive behavior, and
-patch for clarifications that do not change the compatibility surface. A
-clarification needs no ADR; tests change only when needed to preserve the
-clarified interpretation. Formatting, link, and spelling corrections with no
-semantic effect require only a reviewed pull request and no version change.
+patch for clarifications that do not change the compatibility surface.
 
-Before the profile advances from 0.0.0 to its first behavior-bearing version, CI
-must enforce the required profile-version, compatibility-impact, ADR, and test
-updates. Version 0.0.0 establishes the process without claiming that enforcement
-already exists.
+Every profile version change requires one changed ADR with exactly one
+machine-readable classification: `Initial`, `Breaking`, `Additive`, or
+`Clarification`. Initial, breaking, and additive changes require enforcing tests;
+clarification tests change only when needed to preserve the clarified
+interpretation. Formatting, link, and spelling corrections with no semantic
+effect require only a reviewed pull request and no version change.
+
+CI runs `ci/check-profile-change.py`. A pull request that changes `cxf-json` public
+contract files or the delegated OxIRI behavior must also increase `PROFILE.md`,
+change profile integration tests, and add or update an ADR that records
+compatibility impact. The check validates the version bump against that
+classification, requires the first behavior-bearing version to be 0.1.0, and
+rejects version regressions. A non-semantic profile edit may keep the same version
+when no public contract file changed.

@@ -14,12 +14,16 @@ internal implementation stages rather than general-purpose public APIs.
 ## Status
 
 The source repository is public, but no `cxf-json` package has been published.
-The behavior profile remains at reserved version 0.0.0 and makes no CXF
-conformance or API-stability claim.
+Profile 0.1.0 defines the owned Rust contract foundations but makes no CXF parse,
+conformance, untrusted-input safety, or API-stability claim.
 
-The workspace currently contains only `cxf-ingest-probe`, an unpublished
-evidence crate. It does not implement typed CXF projection, profile validation,
-or production resource limits. Do not use it to process untrusted input.
+The workspace contains two unpublished crates:
+
+- `cxf-json` defines source, document-IRI, byte-location, diagnostic, error, and
+  option types. It has no parse entry point.
+- `cxf-ingest-probe` remains the M0 evidence crate. It does not implement typed
+  CXF projection, profile validation, or production resource limits. Do not use
+  it to process untrusted input.
 
 ## Intended scope
 
@@ -47,6 +51,18 @@ The probe and its repository-authored fixtures verify:
 These checks qualify implementation boundaries. They are not a public parser API
 or a conformance suite.
 
+## Core contract
+
+The `cxf-json` crate owns exact source bytes, validates an optional absolute
+document IRI, and defines zero-based byte positions, half-open ranges, structured
+diagnostic fields, a future parse-error envelope, and private parse options. Its
+public signatures contain no Serde, JSON-LD, RDF, filesystem, HTTP, Python, or
+JavaScript values.
+
+See [`spec/PROFILE.md`](spec/PROFILE.md) for the complete 0.1.0 contract. W-007
+owns the first semantic parse path; W-011 owns input limits; W-013 owns concrete
+typed CXF and extension records.
+
 ## Build and test
 
 The repository uses Rust 1.97.1.
@@ -65,15 +81,16 @@ smoke test in Node, and checks exact WASM dependency allowlists.
 ## Specification
 
 [`spec/PROFILE.md`](spec/PROFILE.md) is the sole source of truth for observable
-behavior. Version 0.0.0 is a placeholder with no accepted-input, output,
-diagnostic, compatibility, or resource-limit contract. Architecture decisions
-and their compatibility impact are recorded in [`spec/adr/`](spec/adr/).
+behavior. Version 0.1.0 defines only the owned core contract and explicitly omits
+accepted CXF input, parse output, conformance, and resource limits. Architecture
+decisions and their compatibility impact are recorded in
+[`spec/adr/`](spec/adr/).
 
 ## Contributing
 
-The public API and first behavior-bearing profile are still being designed. Open
-an issue before starting a large change so its scope and compatibility impact can
-be agreed before implementation.
+The parser API and typed CXF model are still being designed. Open an issue before
+starting a large change so its scope and compatibility impact can be agreed before
+implementation.
 
 ## License
 

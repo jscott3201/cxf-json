@@ -14,6 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Install Rust 1.97.1
         run: rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
@@ -21,6 +22,10 @@ jobs:
         run: cargo +1.97.1 fmt --all --check
       - name: Check temporary dependency exceptions
         run: python3 ci/check-release-blockers.py --development
+      - name: Check profile contract
+        env:
+          PROFILE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 ci/check-profile-change.py
       - name: Lint
         run: cargo +1.97.1 clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test all features
@@ -49,11 +54,11 @@ jobs:
           all_features="${RUNNER_TEMP}/wasm-all-features.txt"
           cargo +1.97.1 tree --workspace --all-features --locked \
             --target wasm32-unknown-unknown --prefix none --format '{p}' \
-            | sed -E 's/ \(.*\)$//' | sort -u > "${all_features}"
+            | sed -E '/^$/d; s/ \(.*\)$//' | sort -u > "${all_features}"
           diff -u ci/wasm-all-features-allowlist.txt "${all_features}"
 
           serde_only="${RUNNER_TEMP}/wasm-serde-only.txt"
           cargo +1.97.1 tree --workspace --no-default-features --locked \
             --target wasm32-unknown-unknown --prefix none --format '{p}' \
-            | sed -E 's/ \(.*\)$//' | sort -u > "${serde_only}"
+            | sed -E '/^$/d; s/ \(.*\)$//' | sort -u > "${serde_only}"
           diff -u ci/wasm-serde-only-allowlist.txt "${serde_only}"
