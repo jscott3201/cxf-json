@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, ExitCode},
     str,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use cxf_ingest_probe::{ProbeDiagnostic, ProbeMetrics, measure_json_ld};
@@ -21,7 +21,11 @@ struct FileReport {
     expected_failure_matched: bool,
     input_bytes: Option<usize>,
     elapsed_micros: u128,
+    #[serde(skip)]
+    preflight: Option<Duration>,
     preflight_micros: Option<u128>,
+    #[serde(skip)]
+    json_ld: Option<Duration>,
     json_ld_micros: Option<u128>,
     quad_count: Option<usize>,
     metrics: Option<ProbeMetrics>,
@@ -266,12 +270,14 @@ fn qualify(arguments: impl IntoIterator<Item = OsString>) -> Result<CorpusReport
     let structural_metrics_complete = measured_structure_files == readable_files;
     let preflight_micros = files
         .iter()
-        .filter_map(|file| file.preflight_micros)
-        .reduce(|total, elapsed| total + elapsed);
+        .filter_map(|file| file.preflight)
+        .reduce(|total, elapsed| total + elapsed)
+        .map(|elapsed| elapsed.as_micros());
     let json_ld_micros = files
         .iter()
-        .filter_map(|file| file.json_ld_micros)
-        .reduce(|total, elapsed| total + elapsed);
+        .filter_map(|file| file.json_ld)
+        .reduce(|total, elapsed| total + elapsed)
+        .map(|elapsed| elapsed.as_micros());
     if let Some((root, origin, commit)) = &git {
         verify_git_corpus(root, origin, commit, &canonical_roots, &paths)?;
     }
@@ -601,7 +607,9 @@ fn qualify_file(
                 expected_failure_matched: false,
                 input_bytes: None,
                 elapsed_micros: started.elapsed().as_micros(),
+                preflight: None,
                 preflight_micros: None,
+                json_ld: None,
                 json_ld_micros: None,
                 quad_count: None,
                 metrics: None,
@@ -632,8 +640,10 @@ fn qualify_file(
         expected_failure_matched,
         input_bytes: Some(input.len()),
         elapsed_micros,
-        preflight_micros: Some(measured.timing.preflight_micros),
-        json_ld_micros: measured.timing.json_ld_micros,
+        preflight: Some(measured.timing.preflight),
+        preflight_micros: Some(measured.timing.preflight.as_micros()),
+        json_ld: measured.timing.json_ld,
+        json_ld_micros: measured.timing.json_ld.map(|elapsed| elapsed.as_micros()),
         quad_count,
         metrics,
         failure,

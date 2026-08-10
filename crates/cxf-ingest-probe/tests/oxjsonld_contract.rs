@@ -7,7 +7,7 @@ const NAMED_GRAPH: &[u8] = include_bytes!("fixtures/named-graph.jsonld");
 const REMOTE_CONTEXT: &[u8] = include_bytes!("fixtures/remote-context.jsonld");
 
 #[test]
-fn parse_reports_are_deterministic() {
+fn repeated_parse_reports_match_within_process() {
     let first = parse_json_ld(EMBEDDED_CONTEXT).expect("embedded context should parse");
     let second = parse_json_ld(EMBEDDED_CONTEXT).expect("embedded context should parse");
 

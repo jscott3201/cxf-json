@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { webcrypto } from "node:crypto";
+import { createHash, webcrypto } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 const wasmPath = process.argv[2];
@@ -58,6 +58,7 @@ if (reportMetrics) {
         platform: process.platform,
         architecture: process.arch,
         module_bytes: bytes.byteLength,
+        module_sha256: createHash("sha256").update(bytes).digest("hex"),
         compile_micros: compileMicros,
         instantiate_micros: instantiateMicros,
         execute_micros: executeMicros,

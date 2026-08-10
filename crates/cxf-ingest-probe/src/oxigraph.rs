@@ -19,33 +19,30 @@ pub fn parse_json_ld(input: &[u8]) -> Result<ProbeReport, ProbeFailure> {
     parse_preflighted_json_ld(input, json)
 }
 
-/// Parses JSON-LD and reports native stage timing outside the deterministic result.
+/// Parses JSON-LD and reports native stage timing outside the parse result.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn measure_json_ld(input: &[u8]) -> MeasuredProbe {
     let preflight_started = Instant::now();
     let json = validate_unique_members(input);
-    let preflight_micros = preflight_started.elapsed().as_micros();
+    let preflight = preflight_started.elapsed();
     let json = match json {
         Ok(json) => json,
         Err(failure) => {
             return MeasuredProbe {
                 result: Err(failure),
                 timing: ProbeTiming {
-                    preflight_micros,
-                    json_ld_micros: None,
+                    preflight,
+                    json_ld: None,
                 },
             };
         }
     };
     let json_ld_started = Instant::now();
     let result = parse_preflighted_json_ld(input, json);
-    let json_ld_micros = Some(json_ld_started.elapsed().as_micros());
+    let json_ld = Some(json_ld_started.elapsed());
     MeasuredProbe {
         result,
-        timing: ProbeTiming {
-            preflight_micros,
-            json_ld_micros,
-        },
+        timing: ProbeTiming { preflight, json_ld },
     }
 }
 

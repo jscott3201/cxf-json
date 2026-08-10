@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -66,12 +66,12 @@ pub struct ProbeMetrics {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProbeTiming {
     /// Duplicate-name preflight time, including failed preflights.
-    pub preflight_micros: u128,
+    pub preflight: Duration,
     /// JSON-LD/RDF stage time when preflight completed successfully.
-    pub json_ld_micros: Option<u128>,
+    pub json_ld: Option<Duration>,
 }
 
-/// Deterministic parse result paired with benchmark-only native timing.
+/// Parse result paired with benchmark-only native timing.
 #[derive(Debug)]
 pub struct MeasuredProbe {
     pub result: Result<ProbeReport, ProbeFailure>,

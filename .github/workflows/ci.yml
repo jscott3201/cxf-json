@@ -32,6 +32,17 @@ jobs:
         run: cargo +1.97.1 test --workspace --all-targets --all-features --locked
       - name: Test Serde-only feature set
         run: cargo +1.97.1 test --workspace --no-default-features --locked
+      - name: Test benchmark aggregation
+        run: python3 ci/test-summarize-benchmarks.py
+      - name: Check repository-owned benchmark corpus
+        run: |
+          report="${RUNNER_TEMP}/owned-corpus.json"
+          cargo +1.97.1 build --release --example qualify_cxf_corpus --locked
+          target/release/examples/qualify_cxf_corpus \
+            --expect-failure crates/cxf-ingest-probe/tests/fixtures/remote-context.jsonld \
+            "No LoadDocumentCallback has been set to load remote contexts" \
+            crates/cxf-ingest-probe/tests/fixtures > "${report}"
+          python3 -c 'import json, sys; report = json.load(open(sys.argv[1])); raise SystemExit(not report["structural_metrics_complete"])' "${report}"
 
   wasm:
     runs-on: ubuntu-latest
@@ -47,8 +58,12 @@ jobs:
         run: cargo +1.97.1 build --workspace --no-default-features --locked --target wasm32-unknown-unknown
       - name: Run CXF ingestion smoke test in Node
         run: |
+          metrics="${RUNNER_TEMP}/wasm-metrics.json"
           cargo +1.97.1 build --release --example wasm_cxf_smoke --locked --target wasm32-unknown-unknown
-          node ci/run-wasm-smoke.mjs target/wasm32-unknown-unknown/release/examples/wasm_cxf_smoke.wasm
+          node ci/run-wasm-smoke.mjs \
+            target/wasm32-unknown-unknown/release/examples/wasm_cxf_smoke.wasm \
+            --metrics > "${metrics}"
+          python3 -c 'import json, sys; report = json.load(open(sys.argv[1])); raise SystemExit(not report["module_sha256"])' "${metrics}"
       - name: Enforce WASM dependency allowlists
         run: |
           all_features="${RUNNER_TEMP}/wasm-all-features.txt"
