@@ -112,9 +112,10 @@ behavior, adopt a versioned specification or ADR location and a process for
 changing diagnostic and compatibility rules.
 
 Resolved by D-025 and ADR 0001: the versioned profile lives in
-`spec/PROFILE.md`, normative ADRs live in `spec/adr/`, and research decisions
-remain non-normative until a reviewed pull request records compatibility impact,
-updates the profile version, and adds enforcing tests.
+`spec/PROFILE.md`, governance and rationale ADRs live in `spec/adr/`, and
+research decisions about observable behavior remain non-normative until a
+reviewed pull request records compatibility impact, updates the profile version,
+and adds enforcing tests.
 
 ### OQ-013: What stability gate permits public release?
 

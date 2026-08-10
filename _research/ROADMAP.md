@@ -17,9 +17,9 @@ criteria and records repository-observed completion.
 
 Repository and GitHub state show M0 complete: W-024, W-003, W-004, and W-005 are
 done; `D-P01` and `D-P02` are superseded by adopted decisions; fixture provenance
-is recorded; the guarded, dependency-approved processor passes native and WASM
-qualification; and D-025 resolves OQ-012 with a versioned profile and ADR process
-under `spec/`. The Monday projection remains pending at closeout.
+is recorded; the guarded processor passes native and WASM qualification for
+private development; and D-025 resolves OQ-012 with a versioned profile and ADR
+process under `spec/`. The Monday projection remains pending at closeout.
 Profile version 0.0.0 carries no product-readiness or conformance claim; later
 work must promote behavior before implementing it as a public contract.
 

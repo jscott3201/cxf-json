@@ -14,5 +14,7 @@ implementation relies on one, a reviewed pull request must add the rule here,
 classify its compatibility impact, add or supersede an ADR, update this version,
 and add enforcing tests.
 
-The first behavior-bearing profile will be version 0.1.0. The change process is
-defined in `README.md`.
+The first behavior-bearing profile will be version 0.1.0 after its change process
+has CI enforcement. A breaking pre-1.0 revision after that point increments the
+minor version, such as 0.1.0 to 0.2.0. The complete process is defined in
+`README.md`.
