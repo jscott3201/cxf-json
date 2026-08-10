@@ -14,3 +14,8 @@ The `cxf-*` fixtures were authored for W-003 on 2026-08-09 from the operation
 matrix in `_research/W003-CXF-INGESTION-QUALIFICATION.md`. They use CXF vocabulary
 IRIs and repository-owned `https://example.test/` identities. Their structure and
 content were not copied, translated, or derived from an external fixture.
+
+D-024 and `_research/W005-FIXTURE-LICENSE-POLICY.md` govern additions. Automated
+tests use only independently authored fixtures. External corpus bytes may be read
+from a separately acquired pinned checkout for optional evidence, but are not
+copied, transformed, fetched by tests, or packaged here.

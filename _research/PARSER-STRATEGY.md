@@ -175,7 +175,8 @@ strings, and numeric ranges:
 
 ## Test strategy
 
-- Import the pinned upstream fixture tree with provenance and expected profile.
+- Keep the pinned upstream fixture tree outside the repository; optional
+  compatibility runs read an operator-supplied local checkout under D-024.
 - Compare RDF semantics, not JSON serialization order.
 - Add equivalent documents using alternate prefixes, full IRIs, reordered graph
   nodes, scalar/array forms, and local contexts.

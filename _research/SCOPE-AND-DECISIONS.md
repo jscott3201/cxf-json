@@ -304,6 +304,29 @@ creates pointer-to-quad, span-to-term, or blank-node provenance.
 V1 does not add a source mapper. A later source-aware editor or rewrite feature
 requires its own work item and dependency ruling.
 
+### D-024: v1 distributes only independently authored fixtures
+
+Repository, CI, packaging, and release jobs use only fixtures independently
+authored for this project. They do not store, transmit, distribute, or fetch
+external fixture bytes or derivatives. Specification facts and vocabulary
+identifiers may inform owned tests; external prose, examples, graphics, source,
+goldens, and distinctive serializations are not reproduced.
+
+Optional external compatibility evidence may read an operator-supplied local
+checkout under a project-approved origin and full commit pin. Git-backed mode
+parses exact blobs from that commit's object database and reports aggregate
+results with source-derived external diagnostic content redacted. Lazy object
+fetching is disabled, and external mode requires Git 2.45 or newer so that
+control is enforced. It never fetches, executes, packages, or uploads checkout
+bytes.
+Ephemeral parsing is allowed; reading external data is not a redistribution
+ruling.
+
+Any future vendoring requires a new owner-approved review for each rights and
+provenance bucket, complete literal notices and hashes, generated-source and
+generator lineage where applicable, artifact inclusion rules, and D-015 history
+analysis. OBC content additionally needs explicit permission or legal clearance.
+
 ## Provisional decisions
 
 The remaining proposals require spikes before adoption. Superseded entries stay

@@ -15,12 +15,15 @@ JSON-LD operations listed below without copying W3C, OBC, modelica-json, or Open
 Control Engine fixtures.
 
 The sibling Open Control Engine repository is a read-only external corpus. Runs
-record its exact commit and consume files in place. No source, fixture, golden,
-or generated artifact is copied from that repository. Its own `oce-cxf` fixtures
-characterize a supported consumer dialect; its vendored modelica-json files
-characterize producer output. Neither corpus is a normative CXF oracle.
+record its exact commit and consume exact blobs from that commit's local object
+database. No source, fixture, golden, or generated artifact is copied from that
+repository. Its own `oce-cxf` fixtures characterize a supported consumer dialect;
+its vendored modelica-json files characterize producer output. Neither corpus is
+a normative CXF oracle.
 
-W-005 still owns redistribution and test-fetch policy for external fixtures.
+D-024 records W-005's outcome: external fixture bytes are not redistributed or
+fetched by tests in v1. Optional evidence reads a separately acquired local
+checkout under this harness's pin and read-only checks.
 
 ## Operation matrix
 
@@ -52,14 +55,16 @@ symlink root or discovered symlink entry, or non-UTF-8 path makes the command
 fail. Explicit roots are canonicalized after the root check. The harness performs
 no discovery outside those canonical roots and follows no network references.
 For external evidence, `--git-root`, `--git-origin`, and `--git-commit` require
-the selected CXF files to match the named origin, `git ls-files`, the requested
-commit, and a clean scoped worktree both before and after parsing. Nonstandard
-index flags such as `assume-unchanged` and `skip-worktree` are rejected. Git runs
-with repository-redirection environment variables removed and
-system/global configuration disabled. The command pins `core.worktree`, disables
-replacement objects, fsmonitor, and untracked-index shortcuts, and uses
-`GIT_OPTIONAL_LOCKS=0`, so checks use the supplied checkout and object graph
-without refreshing its index.
+the supplied checkout's repository top level to match the named origin and
+requested commit. The harness requires discovered paths to match regular blobs
+in that commit tree, reads each payload from the commit's object database, not
+from the worktree, and parses those same bytes. External mode requires Git 2.45
+or newer. Git runs with
+repository-redirection environment variables removed, system/global
+configuration disabled, hooks and pagers disabled, replacement objects and lazy
+fetch disabled, and index-monitor shortcuts off. Exact expected messages are
+matched only in memory; source-derived external diagnostic content is redacted
+before serialization.
 
 The harness is an example target in the unpublished probe crate. It is not a
 product CLI or public API.
