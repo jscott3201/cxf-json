@@ -105,13 +105,16 @@ by tests, or packaged in v1. Compatibility evidence may read a separately
 acquired, pinned local checkout without modifying or executing it. A future
 exception requires a new review for each rights/provenance bucket.
 
-### OQ-012: Where does the normative project profile live?
+### OQ-012: Where does the normative project profile live? (resolved)
 
 The current `_research/` corpus is non-normative. Before implementation defines
 behavior, adopt a versioned specification or ADR location and a process for
 changing diagnostic and compatibility rules.
 
-Cleared by: owner governance decision at the M0 exit.
+Resolved by D-025 and ADR 0001: the versioned profile lives in
+`spec/PROFILE.md`, normative ADRs live in `spec/adr/`, and research decisions
+remain non-normative until a reviewed pull request records compatibility impact,
+updates the profile version, and adds enforcing tests.
 
 ### OQ-013: What stability gate permits public release?
 
