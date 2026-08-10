@@ -12,7 +12,7 @@ unset. Monday owns status and ranking; this file owns acceptance criteria.
 | W-024 | Serde/OxJSONLD ingestion boundary | Done, PR #1 | Rust 1.97.1 probe passes `FIRST-SLICE.md`: Serde DTO/syntax evidence, guarded OxJSONLD RDF conversion, owned fixtures, offline behavior, WASM compile, and dependency-health record |
 | W-003 | CXF JSON-LD ingestion qualification | Done, PR #3 | Owned CXF operations pass natively and in Node-executed WASM; Git-pinned Open Control Engine evidence covers 162 local and 44 vendored files; D-020 through D-022 record the outcome |
 | W-004 | Source-fidelity contract | Done, PR #5 | Reject duplicate decoded names; retain submitted bytes; define byte locations and independent optional pointer/RDF-term evidence without a source mapper or dependency that fails D-011 |
-| W-005 | License and fixture-use review | Queued | Record whether upstream fixtures may be copied, transformed, or fetched in tests; retain required notices and provenance |
+| W-005 | License and fixture-use review | In progress | D-024 keeps v1 repository/CI/package fixtures project-authored; external bytes are optional pinned local read-only evidence, never copied, transformed, or fetched by tests |
 
 M0 exits when W-024, W-003, W-004, and W-005 are complete; `D-P01` and `D-P02`
 are replaced by adopted decisions; fixture provenance is clear; and one
@@ -23,7 +23,7 @@ dependency-approved processor passes native plus WASM.
 | ID | Work item | State | Exit condition |
 |---|---|---|---|
 | W-006 | Workspace and core API scaffold | Planned | Native and WASM builds expose ordered CXF input, document, extension, source-location, and diagnostic types without host dependencies or public RDF types |
-| W-007 | CXF semantic ingestion | Planned | Focused and Buildings CXF fixtures join ordered source/DTO fields with private RDF identity, datatypes, language tags, and bounded offline context behavior |
+| W-007 | CXF semantic ingestion | Planned | Repository-authored cases for supported CXF producer forms join ordered source/DTO fields with private RDF identity, datatypes, language tags, and bounded offline context behavior; external corpus evidence remains optional and local under D-024 |
 | W-010 | Boundary equivalence corpus | Planned | Rust, Python, browser, and Node agree on bytes, Unicode, numbers, nulls, maps, and error locations |
 | W-011 | Resource limits and fuzz harness | Planned | Limits are enforced; fuzz targets find no panic, hang, uncontrolled allocation, or network access |
 | W-012 | Blank-node canonical comparison | Planned | Full `CXF-Core.jsonld` equality is stable across processors and serializer-assigned blank-node labels |

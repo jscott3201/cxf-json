@@ -137,6 +137,9 @@ not sufficient.
 `package.json` declares BSD-3-Clause, but
 [`LICENSE.md`](https://raw.githubusercontent.com/lbl-srg/modelica-json/85721b828a6ff8d9d3c1a48ff9a59808d2fa31fb/LICENSE.md)
 contains an additional paragraph granting LBNL rights to publicly or directly
-supplied enhancements. GitHub reports `NOASSERTION`. Legal review should use the
-license text, not the SPDX field alone, before copying upstream source or
-fixtures into a distributable package.
+supplied enhancements when no separate written license agreement is imposed.
+SPDX identifies this variant as `BSD-3-Clause-LBNL`, and GitHub reports
+`NOASSERTION`. The pinned OBC root has no license file, while the published CXF
+page states all rights reserved. D-024 therefore prohibits copying, transforming,
+or test-fetching external fixture bytes in v1; references remain links and
+factual citations.

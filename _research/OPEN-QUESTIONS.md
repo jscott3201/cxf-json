@@ -94,13 +94,16 @@ targets before the spikes.
 
 ## Distribution and governance
 
-### OQ-011: May upstream fixtures be vendored?
+### OQ-011: May upstream fixtures be vendored? (resolved)
 
 The upstream license text differs from its SPDX metadata and includes an LBNL
 enhancement grant. The project needs a deliberate choice between vendoring,
 fetching pinned assets during preparation, or constructing independent fixtures.
 
-Cleared by: `W-005` license review.
+Resolved by D-024: no external fixture bytes are vendored, transformed, fetched
+by tests, or packaged in v1. Compatibility evidence may read a separately
+acquired, pinned local checkout without modifying or executing it. A future
+exception requires a new review for each rights/provenance bucket.
 
 ### OQ-012: Where does the normative project profile live?
 

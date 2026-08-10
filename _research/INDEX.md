@@ -40,8 +40,10 @@ parent repositories do not meet the owner-established community threshold.
 | [DEPENDENCY-GOVERNANCE.md](DEPENDENCY-GOVERNANCE.md) | Frozen community, maintenance, version, and advisory evidence |
 | [W003-CXF-INGESTION-QUALIFICATION.md](W003-CXF-INGESTION-QUALIFICATION.md) | CXF-only processor operation matrix and corpus gates |
 | [W004-SOURCE-FIDELITY-CONTRACT.md](W004-SOURCE-FIDELITY-CONTRACT.md) | Submitted-byte, duplicate-name, location, pointer, and graph-evidence contract |
+| [W005-FIXTURE-LICENSE-POLICY.md](W005-FIXTURE-LICENSE-POLICY.md) | V1 fixture ownership, external evidence, notice, and future-exception policy |
 | [results/W-003.md](results/W-003.md) | W-003 behavior, corpus, target, size, and policy evidence |
 | [results/W-004.md](results/W-004.md) | W-004 implementation, corpus regression, target, and policy evidence |
+| [results/W-005.md](results/W-005.md) | W-005 literal-license, mixed-origin, and operational evidence |
 | [results/W-024.md](results/W-024.md) | First-slice implementation and verification evidence |
 
 ## Evidence policy
@@ -81,8 +83,8 @@ Folder: **Modelica JSON Rust** in the Aionforge Labs workspace.
 | [MJR Defects](https://aionforgelabs.monday.com/boards/18425770675) | Observed implementation defect classes |
 | [MJR Spec](https://aionforgelabs.monday.com/boards/18425770674) | Research documents, decisions, open questions, and compatibility findings |
 
-W-024, W-003, and W-004 are complete. W-005, W-008, and W-009 remain queued in
-Backlog. Other planned work also remains in Backlog.
+W-024, W-003, and W-004 are complete. W-005 is active. W-008 and W-009 remain
+queued in Backlog. Other planned work also remains in Backlog.
 
 Private repository:
 [jscott3201/modelica-json-rust](https://github.com/jscott3201/modelica-json-rust).
