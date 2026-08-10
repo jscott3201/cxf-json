@@ -3,7 +3,8 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use crate::{
-    DiagnosticStage, ProbeDiagnostic, ProbeFailure, SourceDocument, SourcePosition, SourceRange,
+    DiagnosticStage, JsonStructureMetrics, ProbeDiagnostic, ProbeFailure, SourceDocument,
+    SourcePosition, SourceRange,
 };
 
 /// Serde JSON value paired with the exact submitted input bytes.
@@ -11,19 +12,21 @@ use crate::{
 pub struct JsonDocument {
     pub source: SourceDocument,
     pub value: Value,
+    pub metrics: JsonStructureMetrics,
 }
 
 /// Parses ordinary JSON while retaining the submitted input bytes.
 pub fn parse_json(input: &[u8]) -> Result<JsonDocument, ProbeFailure> {
-    validate_unique_members(input)?;
+    let metrics = validate_unique_members(input)?;
     let value = serde_json::from_slice(input).map_err(|error| json_failure(input, error))?;
     Ok(JsonDocument {
         source: SourceDocument::new(input),
         value,
+        metrics,
     })
 }
 
-pub(crate) fn validate_unique_members(input: &[u8]) -> Result<(), ProbeFailure> {
+pub(crate) fn validate_unique_members(input: &[u8]) -> Result<JsonStructureMetrics, ProbeFailure> {
     if let Err(error) = std::str::from_utf8(input) {
         let offset = error.valid_up_to();
         return Err(ProbeFailure {
@@ -35,6 +38,7 @@ pub(crate) fn validate_unique_members(input: &[u8]) -> Result<(), ProbeFailure> 
                 pointer: None,
                 rdf_term: None,
             }),
+            metrics: None,
         });
     }
 
@@ -47,6 +51,7 @@ pub(crate) fn validate_unique_members(input: &[u8]) -> Result<(), ProbeFailure> 
             pointer: None,
             rdf_term: None,
         }),
+        metrics: None,
     })
 }
 
@@ -60,6 +65,7 @@ fn json_failure(input: &[u8], error: serde_json::Error) -> ProbeFailure {
             pointer: None,
             rdf_term: None,
         }),
+        metrics: None,
     }
 }
 
@@ -125,6 +131,7 @@ enum Frame {
     Object {
         state: ObjectState,
         names: HashSet<String>,
+        member_count: usize,
     },
 }
 
@@ -133,22 +140,23 @@ struct ScanError {
     offset: usize,
 }
 
-fn scan_json(input: &[u8]) -> Result<(), ScanError> {
+fn scan_json(input: &[u8]) -> Result<JsonStructureMetrics, ScanError> {
     let mut offset = 0;
     let mut root_complete = false;
     let mut stack = Vec::new();
+    let mut metrics = JsonStructureMetrics::default();
 
     loop {
         skip_whitespace(input, &mut offset);
         let Some(frame) = stack.last_mut() else {
             if root_complete {
                 return if offset == input.len() {
-                    Ok(())
+                    Ok(metrics)
                 } else {
                     Err(scan_error("trailing characters", offset))
                 };
             }
-            parse_value(input, &mut offset, &mut stack)?;
+            parse_value(input, &mut offset, &mut stack, &mut metrics)?;
             root_complete = true;
             continue;
         };
@@ -161,7 +169,7 @@ fn scan_json(input: &[u8]) -> Result<(), ScanError> {
                 }
                 ArrayState::FirstValueOrEnd | ArrayState::Value => {
                     *state = ArrayState::CommaOrEnd;
-                    parse_value(input, &mut offset, &mut stack)?;
+                    parse_value(input, &mut offset, &mut stack, &mut metrics)?;
                 }
                 ArrayState::CommaOrEnd => match input.get(offset) {
                     Some(b',') => {
@@ -175,7 +183,11 @@ fn scan_json(input: &[u8]) -> Result<(), ScanError> {
                     _ => return Err(scan_error("expected ',' or ']'", offset)),
                 },
             },
-            Frame::Object { state, names } => match state {
+            Frame::Object {
+                state,
+                names,
+                member_count,
+            } => match state {
                 ObjectState::FirstKeyOrEnd if input.get(offset) == Some(&b'}') => {
                     offset += 1;
                     stack.pop();
@@ -183,12 +195,15 @@ fn scan_json(input: &[u8]) -> Result<(), ScanError> {
                 ObjectState::FirstKeyOrEnd | ObjectState::Key => {
                     let key_offset = offset;
                     let name = parse_string(input, &mut offset)?;
+                    metrics.decoded_member_name_bytes += name.len();
                     if !names.insert(name.clone()) {
                         return Err(scan_error(
                             format!("duplicate object member {name:?}"),
                             key_offset,
                         ));
                     }
+                    *member_count += 1;
+                    metrics.max_object_members = metrics.max_object_members.max(*member_count);
                     *state = ObjectState::Colon;
                 }
                 ObjectState::Colon => {
@@ -200,7 +215,7 @@ fn scan_json(input: &[u8]) -> Result<(), ScanError> {
                 }
                 ObjectState::Value => {
                     *state = ObjectState::CommaOrEnd;
-                    parse_value(input, &mut offset, &mut stack)?;
+                    parse_value(input, &mut offset, &mut stack, &mut metrics)?;
                 }
                 ObjectState::CommaOrEnd => match input.get(offset) {
                     Some(b',') => {
@@ -218,20 +233,29 @@ fn scan_json(input: &[u8]) -> Result<(), ScanError> {
     }
 }
 
-fn parse_value(input: &[u8], offset: &mut usize, stack: &mut Vec<Frame>) -> Result<(), ScanError> {
+fn parse_value(
+    input: &[u8],
+    offset: &mut usize,
+    stack: &mut Vec<Frame>,
+    metrics: &mut JsonStructureMetrics,
+) -> Result<(), ScanError> {
     skip_whitespace(input, offset);
+    metrics.total_values += 1;
     match input.get(*offset) {
         Some(b'{') => {
             *offset += 1;
             stack.push(Frame::Object {
                 state: ObjectState::FirstKeyOrEnd,
                 names: HashSet::new(),
+                member_count: 0,
             });
+            metrics.max_nesting_depth = metrics.max_nesting_depth.max(stack.len());
             Ok(())
         }
         Some(b'[') => {
             *offset += 1;
             stack.push(Frame::Array(ArrayState::FirstValueOrEnd));
+            metrics.max_nesting_depth = metrics.max_nesting_depth.max(stack.len());
             Ok(())
         }
         Some(b'"') => parse_string(input, offset).map(drop),

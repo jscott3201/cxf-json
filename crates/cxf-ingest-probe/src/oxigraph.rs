@@ -1,43 +1,122 @@
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+
 use oxjsonld::JsonLdParser;
 use oxrdf::{GraphName, NamedOrBlankNode, Quad, Term};
 
 use crate::{
-    DiagnosticStage, ProbeDiagnostic, ProbeFailure, ProbeReport, RdfNodeKind, RdfNodeSummary,
-    RdfObjectSummary, RdfQuadSummary, SourceDocument,
+    DiagnosticStage, ProbeDiagnostic, ProbeFailure, ProbeMetrics, ProbeReport, RdfNodeKind,
+    RdfNodeSummary, RdfObjectSummary, RdfQuadSummary, SourceDocument,
     json::{source_range, validate_unique_members},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{MeasuredProbe, ProbeTiming};
+
 /// Parses JSON-LD into owned RDF summaries without exposing Oxigraph types.
 pub fn parse_json_ld(input: &[u8]) -> Result<ProbeReport, ProbeFailure> {
-    validate_unique_members(input)?;
+    let json = validate_unique_members(input)?;
+    parse_preflighted_json_ld(input, json)
+}
 
-    let mut quads = JsonLdParser::new()
+/// Parses JSON-LD and reports native stage timing outside the deterministic result.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn measure_json_ld(input: &[u8]) -> MeasuredProbe {
+    let preflight_started = Instant::now();
+    let json = validate_unique_members(input);
+    let preflight_micros = preflight_started.elapsed().as_micros();
+    let json = match json {
+        Ok(json) => json,
+        Err(failure) => {
+            return MeasuredProbe {
+                result: Err(failure),
+                timing: ProbeTiming {
+                    preflight_micros,
+                    json_ld_micros: None,
+                },
+            };
+        }
+    };
+    let json_ld_started = Instant::now();
+    let result = parse_preflighted_json_ld(input, json);
+    let json_ld_micros = Some(json_ld_started.elapsed().as_micros());
+    MeasuredProbe {
+        result,
+        timing: ProbeTiming {
+            preflight_micros,
+            json_ld_micros,
+        },
+    }
+}
+
+fn parse_preflighted_json_ld(
+    input: &[u8],
+    json: crate::JsonStructureMetrics,
+) -> Result<ProbeReport, ProbeFailure> {
+    let quads = JsonLdParser::new()
         .for_slice(input)
         .map(|result| result.map(|quad| summarize_quad(&quad)))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| ProbeFailure {
-            source: SourceDocument::new(input),
-            diagnostic: Box::new(ProbeDiagnostic {
-                stage: DiagnosticStage::JsonLd,
-                message: error.to_string(),
-                range: error.location().map(|range| {
-                    source_range(
-                        input,
-                        usize::try_from(range.start.offset).unwrap_or(input.len()),
-                        usize::try_from(range.end.offset).unwrap_or(input.len()),
-                    )
+        .collect::<Result<Vec<_>, _>>();
+    let mut quads = match quads {
+        Ok(quads) => quads,
+        Err(error) => {
+            return Err(ProbeFailure {
+                source: SourceDocument::new(input),
+                diagnostic: Box::new(ProbeDiagnostic {
+                    stage: DiagnosticStage::JsonLd,
+                    message: error.to_string(),
+                    range: error.location().map(|range| {
+                        source_range(
+                            input,
+                            usize::try_from(range.start.offset).unwrap_or(input.len()),
+                            usize::try_from(range.end.offset).unwrap_or(input.len()),
+                        )
+                    }),
+                    pointer: None,
+                    rdf_term: None,
                 }),
-                pointer: None,
-                rdf_term: None,
-            }),
-        })?;
+                metrics: Some(Box::new(ProbeMetrics {
+                    json,
+                    rdf_term_bytes: 0,
+                })),
+            });
+        }
+    };
 
     quads.sort();
+    let rdf_term_bytes = quads.iter().map(retained_quad_bytes).sum();
     Ok(ProbeReport {
         source: SourceDocument::new(input),
         diagnostics: Vec::new(),
         quads,
+        metrics: ProbeMetrics {
+            json,
+            rdf_term_bytes,
+        },
     })
+}
+
+fn retained_quad_bytes(quad: &RdfQuadSummary) -> usize {
+    retained_node_bytes(&quad.subject)
+        + quad.predicate.len()
+        + retained_object_bytes(&quad.object)
+        + quad.graph_name.as_ref().map_or(0, retained_node_bytes)
+}
+
+fn retained_node_bytes(node: &RdfNodeSummary) -> usize {
+    node.value.len()
+}
+
+fn retained_object_bytes(object: &RdfObjectSummary) -> usize {
+    match object {
+        RdfObjectSummary::Node(node) => retained_node_bytes(node),
+        RdfObjectSummary::Literal {
+            value,
+            datatype,
+            language,
+        } => value.len() + datatype.len() + language.as_ref().map_or(0, String::len),
+        RdfObjectSummary::Other(value) => value.len(),
+    }
 }
 
 fn summarize_quad(quad: &Quad) -> RdfQuadSummary {

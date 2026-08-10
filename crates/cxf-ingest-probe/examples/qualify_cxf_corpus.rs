@@ -10,7 +10,7 @@ use std::{
     time::Instant,
 };
 
-use cxf_ingest_probe::{ProbeDiagnostic, parse_json_ld};
+use cxf_ingest_probe::{ProbeDiagnostic, ProbeMetrics, measure_json_ld};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -21,7 +21,10 @@ struct FileReport {
     expected_failure_matched: bool,
     input_bytes: Option<usize>,
     elapsed_micros: u128,
+    preflight_micros: Option<u128>,
+    json_ld_micros: Option<u128>,
     quad_count: Option<usize>,
+    metrics: Option<ProbeMetrics>,
     failure: Option<FileFailure>,
 }
 
@@ -45,7 +48,17 @@ struct CorpusReport {
     unexpected_passes: usize,
     read_failures: usize,
     input_bytes: usize,
+    max_input_bytes: usize,
     quad_count: usize,
+    max_nesting_depth: usize,
+    max_object_members: usize,
+    total_json_values: usize,
+    decoded_member_name_bytes: usize,
+    rdf_term_bytes: usize,
+    measured_structure_files: usize,
+    structural_metrics_complete: bool,
+    preflight_micros: Option<u128>,
+    json_ld_micros: Option<u128>,
     elapsed_micros: u128,
 }
 
@@ -214,7 +227,51 @@ fn qualify(arguments: impl IntoIterator<Item = OsString>) -> Result<CorpusReport
         .filter(|file| matches!(file.failure, Some(FileFailure::Read { .. })))
         .count();
     let input_bytes = files.iter().filter_map(|file| file.input_bytes).sum();
+    let max_input_bytes = files
+        .iter()
+        .filter_map(|file| file.input_bytes)
+        .max()
+        .unwrap_or(0);
     let quad_count = files.iter().filter_map(|file| file.quad_count).sum();
+    let max_nesting_depth = files
+        .iter()
+        .filter_map(|file| file.metrics.map(|metrics| metrics.json.max_nesting_depth))
+        .max()
+        .unwrap_or(0);
+    let max_object_members = files
+        .iter()
+        .filter_map(|file| file.metrics.map(|metrics| metrics.json.max_object_members))
+        .max()
+        .unwrap_or(0);
+    let total_json_values = files
+        .iter()
+        .filter_map(|file| file.metrics.map(|metrics| metrics.json.total_values))
+        .sum();
+    let decoded_member_name_bytes = files
+        .iter()
+        .filter_map(|file| {
+            file.metrics
+                .map(|metrics| metrics.json.decoded_member_name_bytes)
+        })
+        .sum();
+    let rdf_term_bytes = files
+        .iter()
+        .filter_map(|file| file.metrics.map(|metrics| metrics.rdf_term_bytes))
+        .sum();
+    let measured_structure_files = files.iter().filter(|file| file.metrics.is_some()).count();
+    let readable_files = files
+        .iter()
+        .filter(|file| file.input_bytes.is_some())
+        .count();
+    let structural_metrics_complete = measured_structure_files == readable_files;
+    let preflight_micros = files
+        .iter()
+        .filter_map(|file| file.preflight_micros)
+        .reduce(|total, elapsed| total + elapsed);
+    let json_ld_micros = files
+        .iter()
+        .filter_map(|file| file.json_ld_micros)
+        .reduce(|total, elapsed| total + elapsed);
     if let Some((root, origin, commit)) = &git {
         verify_git_corpus(root, origin, commit, &canonical_roots, &paths)?;
     }
@@ -231,7 +288,17 @@ fn qualify(arguments: impl IntoIterator<Item = OsString>) -> Result<CorpusReport
         unexpected_passes,
         read_failures,
         input_bytes,
+        max_input_bytes,
         quad_count,
+        max_nesting_depth,
+        max_object_members,
+        total_json_values,
+        decoded_member_name_bytes,
+        rdf_term_bytes,
+        measured_structure_files,
+        structural_metrics_complete,
+        preflight_micros,
+        json_ld_micros,
         elapsed_micros: started.elapsed().as_micros(),
         files,
     };
@@ -534,21 +601,26 @@ fn qualify_file(
                 expected_failure_matched: false,
                 input_bytes: None,
                 elapsed_micros: started.elapsed().as_micros(),
+                preflight_micros: None,
+                json_ld_micros: None,
                 quad_count: None,
+                metrics: None,
                 failure: Some(FileFailure::Read { message }),
             });
         }
     };
-    let result = parse_json_ld(&input);
+    let measured = measure_json_ld(&input);
     let elapsed_micros = started.elapsed().as_micros();
-    let (quad_count, failure, expected_failure_matched) = match result {
-        Ok(report) => (Some(report.quads.len()), None, false),
+    let (quad_count, metrics, failure, expected_failure_matched) = match measured.result {
+        Ok(report) => (Some(report.quads.len()), Some(report.metrics), None, false),
         Err(failure) => {
+            let metrics = failure.metrics.map(|metrics| *metrics);
             let mut diagnostic = *failure.diagnostic;
             let expected_failure_matched = expected_failure == Some(diagnostic.message.as_str());
             redact_external_diagnostic(&mut diagnostic, git_source.is_some());
             (
                 None,
+                metrics,
                 Some(FileFailure::Parse { diagnostic }),
                 expected_failure_matched,
             )
@@ -560,7 +632,10 @@ fn qualify_file(
         expected_failure_matched,
         input_bytes: Some(input.len()),
         elapsed_micros,
+        preflight_micros: Some(measured.timing.preflight_micros),
+        json_ld_micros: measured.timing.json_ld_micros,
         quad_count,
+        metrics,
         failure,
     })
 }
@@ -637,6 +712,49 @@ mod tests {
         assert_eq!(report.file_count, 8);
         assert_eq!(report.expected_failures, 1);
         assert!(!report.has_regressions());
+        assert_eq!(report.input_bytes, 5_738);
+        assert_eq!(report.max_input_bytes, 2_456);
+        assert_eq!(report.quad_count, 58);
+        assert_eq!(report.max_nesting_depth, 5);
+        assert_eq!(report.max_object_members, 7);
+        assert_eq!(report.total_json_values, 198);
+        assert_eq!(report.decoded_member_name_bytes, 1_266);
+        assert_eq!(report.rdf_term_bytes, 6_486);
+        assert_eq!(report.measured_structure_files, 8);
+        assert!(report.structural_metrics_complete);
+        assert!(report.preflight_micros.is_some());
+        assert!(report.json_ld_micros.is_some());
+    }
+
+    #[test]
+    fn expected_preflight_failure_is_timed_and_marks_structure_incomplete() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("crate should be inside the workspace");
+        let directory = workspace.join("target").join(format!(
+            "cxf-ingest-probe-preflight-metrics-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("temporary directory should be created");
+        let duplicate = directory.join("duplicate.jsonld");
+        fs::write(&duplicate, br#"{"a":1,"a":2}"#).expect("fixture should be written");
+
+        let report = qualify([
+            OsString::from("--expect-failure"),
+            duplicate.clone().into_os_string(),
+            OsString::from("duplicate object member \"a\""),
+            duplicate.into_os_string(),
+        ])
+        .expect("expected failure should be reported");
+        fs::remove_dir_all(directory).expect("temporary directory should be removed");
+
+        assert_eq!(report.expected_failures, 1);
+        assert_eq!(report.measured_structure_files, 0);
+        assert!(!report.structural_metrics_complete);
+        assert!(report.preflight_micros.is_some());
+        assert_eq!(report.json_ld_micros, None);
     }
 
     #[test]
