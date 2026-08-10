@@ -1,20 +1,87 @@
 # CXF project profile
 
-Profile version: 0.0.0
+Profile version: 0.1.0
 
-Status: Reserved; no normative behavior profile adopted.
+Status: Behavior-bearing core contract; no parser or conformance profile.
 
-This file is the source-of-truth location for observable behavior beginning with
-M1. Version 0.0.0 defines no accepted input, output, diagnostic, compatibility,
-ordering, resource-limit, context-loader, or public API contract. It does not make
-the M0 ingestion probe a production API or establish CXF conformance.
+Compatibility impact: Initial behavior-bearing contract; version 0.0.0 defined no
+observable behavior. ADR 0004 records the machine-readable `Initial`
+classification.
 
-M0 research conclusions are candidates for promotion, not normative rules. Before
-implementation relies on one, a reviewed pull request must add the rule here,
-classify its compatibility impact, add or supersede an ADR, update this version,
-and add enforcing tests.
+## Scope
 
-The first behavior-bearing profile will be version 0.1.0 after its change process
-has CI enforcement. A breaking pre-1.0 revision after that point increments the
-minor version, such as 0.1.0 to 0.2.0. The complete process is defined in
-`README.md`.
+Version 0.1.0 defines the owned Rust foundations used by later CXF ingestion. It
+does not define accepted JSON or CXF input, a parse entry point, typed CXF values,
+extension records, validation rules, resource limits, context loading, host
+serialization, or package-release stability.
+
+The `cxf-json` package remains unpublished at package version 0.0.0. Its public
+contract is governed by this profile even before package publication.
+
+## Public boundary
+
+The crate exports `SourceDocument`, `DocumentIri`, `DocumentIriError`,
+`SourcePosition`, `SourceRange`, `DiagnosticCode`, `DiagnosticSeverity`,
+`DiagnosticStage`, `Diagnostic`, `ParseError`, and `ParseOptions`.
+
+Public signatures MUST NOT expose Serde, OxIRI, OxJSONLD, OxRDF, filesystem, HTTP,
+Python, JavaScript, or other host-runtime values. Profile 0.1.0 defines no Serde
+serialization contract for public core types.
+
+## Source bytes
+
+`SourceDocument::from_bytes` MUST take ownership of the supplied `Vec<u8>` without
+changing its contents. `SourceDocument::as_bytes` MUST return those exact bytes.
+Construction does not validate UTF-8, JSON, JSON-LD, or CXF.
+
+`SourceDocument` debug output MUST report the byte length without including the
+document bytes. This prevents routine debug formatting from copying input content
+into logs.
+
+## Document IRI
+
+`DocumentIri::parse` MUST accept an absolute RFC 3987 IRI and MUST reject a
+relative IRI. A successful value MUST retain the submitted spelling without
+normalization. Failure MUST return the project-owned `DocumentIriError`, not an
+OxIRI error value. `DocumentIri` debug output MUST redact the IRI spelling;
+`ParseOptions` debug output inherits that redaction. `DocumentIri::as_str` and
+display formatting return the exact spelling when a caller requests it.
+
+`ParseOptions::new` and `ParseOptions::default` MUST contain no document IRI.
+`ParseOptions::with_document_iri` MUST retain the supplied validated
+`DocumentIri`. Option fields remain private.
+
+## Source locations
+
+`SourcePosition` fields are unsigned 64-bit values. Offset and column units are
+bytes. Offset, line, and column are zero-based; line counts preceding line-feed
+bytes, and column counts bytes since the most recent line-feed byte.
+
+`SourceRange` is half-open: start is inclusive and end is exclusive. Equal start
+and end positions represent a detection position. Construction MUST reject an
+end offset before the start offset. The value constructors do not verify that
+positions belong to a particular source document or that callers supplied a
+consistent line/column triple.
+
+## Diagnostics and errors
+
+Diagnostic severity values are `Warning` and `Error`. Diagnostic stages are
+`Input`, `Json`, `JsonLd`, `Cxf`, and `Profile`. Both enums are non-exhaustive.
+
+`Diagnostic` provides a project-owned code, severity, stage, human-readable
+message, optional byte range, optional JSON Pointer, and optional RDF-term
+evidence. Range, pointer, and RDF-term evidence are independent; the presence of
+one does not imply either other value exists. Consumers MUST match a future
+diagnostic by code and structured fields, not by message text. Version 0.1.0
+defines no concrete diagnostic codes or emitting behavior.
+
+`ParseError` is an owned envelope for a future admitted source document and one
+diagnostic. Version 0.1.0 defines the type and accessors but no function that
+constructs or returns it.
+
+## Compatibility
+
+This is the first behavior-bearing profile. A breaking pre-1.0 change MUST
+increment the minor version and reset the patch version to zero. Additive behavior
+or a new public contract MUST advance the patch version and follow
+`spec/README.md`.
