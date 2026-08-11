@@ -113,9 +113,10 @@ metadata = json.loads(
 package = next((package for package in metadata["packages"] if package["name"] == "cxf-json"), None)
 if package is None or package["publish"] != []:
     fail("the cxf-json package must exist and remain unpublished")
+assert package is not None
 dependencies = {dependency["name"] for dependency in package["dependencies"]}
-if dependencies != {"oxiri"}:
-    fail("the cxf-json package may depend only on private IRI validation in profile 0.1.0")
+if dependencies != {"oxiri", "serde_json"}:
+    fail("the cxf-json package must retain its approved private dependency boundary")
 
 
 base = os.environ.get("PROFILE_BASE_SHA")
