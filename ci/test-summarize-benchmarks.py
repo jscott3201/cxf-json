@@ -65,6 +65,40 @@ def wasm_report(run_id, digest="0" * 64):
     }
 
 
+def stress_report(run_id, digest="0" * 64):
+    return {
+        "run_id": run_id,
+        "instrumentation_revision": "a" * 40,
+        "generator_version": 1,
+        "cases": [
+            {
+                "name": "width-4",
+                "family": "width",
+                "parameters": {"members": 4},
+                "input_bytes": 20,
+                "input_sha256": digest,
+                "expected": {"kind": "success", "quad_count": 0},
+                "actual": {"kind": "success", "quad_count": 0},
+                "metrics": {
+                    "json": {
+                        "max_nesting_depth": 1,
+                        "max_object_members": 4,
+                        "total_values": 5,
+                        "decoded_member_name_bytes": 4,
+                    },
+                    "rdf_term_bytes": 0,
+                },
+                "preflight_micros": 2,
+                "json_ld_micros": 3,
+            }
+        ],
+        "case_count": 1,
+        "input_bytes": 20,
+        "unexpected_outcomes": 0,
+        "elapsed_micros": 8,
+    }
+
+
 class SummaryTests(unittest.TestCase):
     def test_summarizes_five_pinned_corpus_runs(self):
         reports = [corpus_report(str(run)) for run in range(5)]
@@ -91,6 +125,28 @@ class SummaryTests(unittest.TestCase):
         reports.append(wasm_report("4", "1" * 64))
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             benchmarks.summarize_wasm(reports)
+
+    def test_summarizes_five_resource_stress_runs(self):
+        reports = [stress_report(str(run)) for run in range(5)]
+        reports[4]["cases"][0]["metrics"]["rdf_term_bytes"] = 4
+        with tempfile.TemporaryDirectory() as directory:
+            times = []
+            for run in range(5):
+                path = Path(directory) / f"stress-{run}.time"
+                path.write_text(" 8192  maximum resident set size\n")
+                times.append(path)
+            summary = benchmarks.summarize_resource_stress(reports, times)
+
+        self.assertEqual(summary["generator_version"], 1)
+        self.assertEqual(summary["cases"][0]["preflight_micros"]["median"], 2)
+        self.assertEqual(summary["cases"][0]["rdf_term_bytes"]["maximum"], 4)
+        self.assertEqual(summary["maximum_rss_bytes"]["median"], 8192)
+
+    def test_rejects_changed_resource_stress_case(self):
+        reports = [stress_report(str(run)) for run in range(5)]
+        reports[4]["cases"][0]["input_sha256"] = "1" * 64
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            benchmarks.summarize_resource_stress(reports, ["unused"] * 5)
 
     def test_requires_five_reports(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

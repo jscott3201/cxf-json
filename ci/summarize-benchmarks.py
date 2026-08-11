@@ -174,6 +174,97 @@ def summarize_wasm(reports):
     }
 
 
+def stress_case_identity(case):
+    identity = {
+        field: case[field]
+        for field in [
+            "name",
+            "family",
+            "parameters",
+            "input_bytes",
+            "input_sha256",
+            "expected",
+            "actual",
+        ]
+    }
+    identity["json_metrics"] = (
+        None if case["metrics"] is None else case["metrics"]["json"]
+    )
+    return identity
+
+
+def summarize_resource_stress(reports, time_reports):
+    instrumentation_revision = validate_reports(reports)
+    if len(reports) != len(time_reports):
+        fail("resource-stress report and time-report counts differ")
+    if any(report["unexpected_outcomes"] != 0 for report in reports):
+        fail("one or more resource-stress runs have unexpected outcomes")
+
+    generator_version = stable_value(reports, "generator_version")
+    case_count = stable_value(reports, "case_count")
+    input_bytes = stable_value(reports, "input_bytes")
+    identities = [
+        [stress_case_identity(case) for case in report["cases"]] for report in reports
+    ]
+    if len({json.dumps(identity, sort_keys=True) for identity in identities}) != 1:
+        fail("resource-stress case identity differs across runs")
+    if len(identities[0]) != case_count:
+        fail("resource-stress case count does not match the report")
+    for case in identities[0]:
+        if re.fullmatch(r"[0-9a-f]{64}", case["input_sha256"]) is None:
+            fail(f"{case['name']} input_sha256 is not a lowercase SHA-256 digest")
+
+    rss = []
+    for path in time_reports:
+        match = rss_pattern.search(Path(path).read_text())
+        if match is None:
+            fail(f"maximum RSS is missing from {path}")
+        rss.append(int(match.group(1)))
+
+    cases = []
+    for index, identity in enumerate(identities[0]):
+        preflight = [report["cases"][index]["preflight_micros"] for report in reports]
+        json_ld = [report["cases"][index]["json_ld_micros"] for report in reports]
+        if any(value is None for value in json_ld):
+            if not all(value is None for value in json_ld):
+                fail(f"{identity['name']} has inconsistent JSON-LD timing")
+            json_ld_distribution = None
+        else:
+            json_ld_distribution = distribution(json_ld)
+        rdf_term_bytes = [
+            None if report["cases"][index]["metrics"] is None
+            else report["cases"][index]["metrics"]["rdf_term_bytes"]
+            for report in reports
+        ]
+        if any(value is None for value in rdf_term_bytes):
+            if not all(value is None for value in rdf_term_bytes):
+                fail(f"{identity['name']} has inconsistent RDF term metrics")
+            rdf_term_distribution = None
+        else:
+            rdf_term_distribution = distribution(rdf_term_bytes)
+        cases.append(
+            {
+                **identity,
+                "rdf_term_bytes": rdf_term_distribution,
+                "preflight_micros": distribution(preflight),
+                "json_ld_micros": json_ld_distribution,
+            }
+        )
+
+    return {
+        "runs": len(reports),
+        "instrumentation_revision": instrumentation_revision,
+        "generator_version": generator_version,
+        "case_count": case_count,
+        "input_bytes": input_bytes,
+        "cases": cases,
+        "report_micros": distribution(
+            [report["elapsed_micros"] for report in reports]
+        ),
+        "maximum_rss_bytes": distribution(rss),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="mode", required=True)
@@ -182,14 +273,20 @@ def main():
     corpus.add_argument("--times", nargs="+", required=True)
     wasm = subparsers.add_parser("wasm")
     wasm.add_argument("reports", nargs="+")
+    stress = subparsers.add_parser("resource-stress")
+    stress.add_argument("reports", nargs="+")
+    stress.add_argument("--times", nargs="+", required=True)
     arguments = parser.parse_args()
 
     reports = load_json(arguments.reports)
     validate_unique_paths(arguments.reports, "report")
-    if arguments.mode == "corpus":
+    if arguments.mode in ["corpus", "resource-stress"]:
         validate_unique_paths(arguments.times, "time-report")
         validate_time_pairs(arguments.reports, arguments.times)
-        summary = summarize_corpus(reports, arguments.times)
+        if arguments.mode == "corpus":
+            summary = summarize_corpus(reports, arguments.times)
+        else:
+            summary = summarize_resource_stress(reports, arguments.times)
     else:
         summary = summarize_wasm(reports)
     json.dump(summary, sys.stdout, indent=2)

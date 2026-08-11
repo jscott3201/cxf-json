@@ -5,6 +5,8 @@
 
 mod dto;
 mod json;
+#[cfg(feature = "oxigraph")]
+mod resource_stress;
 
 #[cfg(feature = "oxigraph")]
 mod oxigraph;
@@ -15,6 +17,8 @@ pub use dto::{
     RdfQuadSummary, SourceDocument, SourcePosition, SourceRange,
 };
 pub use json::{JsonDocument, parse_json};
+#[cfg(feature = "oxigraph")]
+pub use resource_stress::{StressCase, StressExpected, StressParameter, resource_stress_cases};
 
 #[cfg(feature = "oxigraph")]
 pub use oxigraph::parse_json_ld;
