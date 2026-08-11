@@ -40,7 +40,7 @@ execution time, and linear memory before and after the smoke workload.
 | Build | `--release`, locked dependencies |
 | Runs | Five independent process executions per corpus, resource-stress, and WASM workload |
 | Corpus baseline revision | `7a69e58e821eb5ebf36a55dcc67d673ec11cd7a9` |
-| Resource-stress revision | `8715cc908c8a239a6f809621bb3ec26debe06534` |
+| Resource-stress revision | `d22f3f4f0deec62381bb2e30386a747ecaed9e30` |
 
 Corpus baseline evidence was read from this repository's Git object database at
 its instrumentation revision. External evidence was read from the local Open
@@ -95,32 +95,32 @@ bytes and diagnostic metadata but do not produce a successful graph.
 
 | Case | Input bytes | Depth | Max members | JSON values | Result | RDF term bytes | Preflight | JSON-LD/RDF |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 262,144-byte string | 262,192 | 1 | 2 | 3 | 1 quad | 262,215 | 158 (142-443) | 154 (142-786) |
-| Semantic depth 16 | 754 | 16 | 2 | 32 | 15 quads | 791 | 7 (6-7) | 53 (45-55) |
-| Semantic depth 32 | 1,538 | 32 | 2 | 64 | 31 quads | 1,655 | 10 (8-10) | 114 (94-121) |
-| Semantic depth 64 | 3,106 | 64 | 2 | 128 | 63 quads | 3,383 | 16 (14-17) | 308 (306-327) |
-| 4,096-member object | 118,785 | 1 | 4,096 | 4,097 | 0 quads | 0 | 440 (433-452) | 1,259 (1,203-1,412) |
-| 32,768 null values | 163,887 | 2 | 2 | 32,771 | 0 quads | 0 | 119 (111-131) | 1,781 (1,769-1,786) |
-| 32,768 retained values | 65,583 | 2 | 2 | 32,771 | 32,768 quads | 2,392,064 | 140 (134-143) | 9,238 (8,986-9,308) |
-| 512 names of 256 bytes | 135,169 | 1 | 512 | 513 | 0 quads | 0 | 191 (189-205) | 385 (373-432) |
-| 65,536-byte decoded duplicate | 137,744 | - | - | - | JSON failure | - | 196 (187-202) | - |
-| 512 context terms | 33,831 | 2 | 514 | 1,027 | 512 quads | 51,712 | 111 (108-122) | 659 (634-694) |
-| 256 repeated local contexts | 36,377 | 4 | 512 | 1,795 | 256 quads | 20,992 | 150 (142-170) | 6,061 (5,986-6,515) |
-| Early `@id`, 128 by 16 | 59,681 | 2 | 17 | 2,305 | 2,048 quads | 172,320 | 234 (214-259) | 1,014 (977-1,056) |
-| Late `@id`, 128 by 16 | 59,809 | 2 | 17 | 2,305 | 2,048 quads | 172,320 | 225 (211-228) | 980 (964-1,030) |
-| RDF list of 1,024 values | 2,105 | 3 | 2 | 1,028 | 2,049 quads | 237,451 (237,415-237,481) | 5 (5-6) | 623 (609-632) |
-| 2,048 compact-IRI properties | 28,782 | 3 | 2,050 | 2,054 | 2,048 quads | 208,896 | 153 (148-162) | 1,315 (1,267-1,321) |
-| 512 colliding keyword aliases | 24,590 | 2 | 513 | 1,026 | JSON-LD failure | 0 | 116 (110-123) | 394 (369-405) |
+| 262,144-byte string | 262,192 | 1 | 2 | 3 | 1 quad | 262,215 | 180 (158-295) | 199 (169-635) |
+| Semantic depth 16 | 754 | 16 | 2 | 32 | 15 quads | 791 | 7 (6-8) | 66 (60-81) |
+| Semantic depth 32 | 1,538 | 32 | 2 | 64 | 31 quads | 1,655 | 15 (13-26) | 117 (112-192) |
+| Semantic depth 64 | 3,106 | 64 | 2 | 128 | 63 quads | 3,383 | 15 (14-19) | 359 (341-707) |
+| 4,096-member object | 118,785 | 1 | 4,096 | 4,097 | 0 quads | 0 | 527 (444-734) | 1,594 (1,393-1,859) |
+| 32,768 null values | 163,887 | 2 | 2 | 32,771 | 0 quads | 0 | 145 (128-183) | 2,278 (2,042-2,618) |
+| 32,768 retained values | 65,583 | 2 | 2 | 32,771 | 32,768 quads | 2,392,064 | 162 (159-204) | 13,465 (11,369-13,711) |
+| 512 names of 256 bytes | 135,169 | 1 | 512 | 513 | 0 quads | 0 | 223 (215-439) | 464 (440-831) |
+| 65,536-byte decoded duplicate | 137,744 | - | - | - | JSON failure | - | 219 (213-521) | - |
+| 512 context terms | 33,831 | 2 | 514 | 1,027 | 512 quads | 51,712 | 151 (118-376) | 1,140 (855-1,731) |
+| 256 repeated local contexts | 36,377 | 4 | 512 | 1,795 | 256 quads | 20,992 | 186 (160-296) | 8,665 (7,231-10,381) |
+| Early `@id`, 128 by 16 | 59,681 | 2 | 17 | 2,305 | 2,048 quads | 172,320 | 297 (244-332) | 1,410 (1,124-2,029) |
+| Late `@id`, 128 by 16 | 59,809 | 2 | 17 | 2,305 | 2,048 quads | 172,320 | 380 (263-487) | 1,579 (1,159-1,947) |
+| RDF list of 1,024 values | 2,105 | 3 | 2 | 1,028 | 2,049 quads | 237,433 (237,418-237,457) | 11 (7-20) | 773 (682-1,469) |
+| 2,048 compact-IRI properties | 28,782 | 3 | 2,050 | 2,054 | 2,048 quads | 208,896 | 171 (165-357) | 1,555 (1,467-2,151) |
+| 512 colliding keyword aliases | 24,590 | 2 | 513 | 1,026 | JSON-LD failure | 0 | 147 (123-341) | 723 (550-824) |
 
-The complete suite took 28,739 us (28,381-31,364 us) with process maximum RSS
-of 31,621,120 bytes (30,113,792-31,932,416 bytes). RSS covers the whole suite and
+The complete suite took 40,256 us (38,770-40,867 us) with process maximum RSS
+of 32,931,840 bytes (29,851,648-33,308,672 bytes). RSS covers the whole suite and
 cannot be assigned to one case.
 
 The measurements support four narrow conclusions:
 
 - Retaining 32,768 repeated values emits 32,768 repeated quads and 2,392,064 RDF
   term bytes. The larger null-valued control emits no quads.
-- Reprocessing a 512-term parent context for 256 local contexts takes roughly nine
+- Reprocessing a 512-term parent context for 256 local contexts takes roughly eight
   times the JSON-LD/RDF time of one 512-term context with 512 properties.
 - Early and late `@id` controls are equivalent within run variation in regular
   OxJSONLD mode; these results do not show an order-specific cost.
@@ -142,9 +142,9 @@ duplicate rejection, large exponents, reviewed parser seeds, deep nesting, and a
 |---|---:|---:|
 | Module size | 661,976 bytes | fixed |
 | Module SHA-256 | `61a826137098aebb86e5758f6743f88ee7f678cd3a8ebc06eea2466007603aeb` | fixed |
-| Compile | 592 us | 553-1,445 us |
-| Instantiate | 68 us | 63-324 us |
-| Execute | 55,599 us | 53,536-60,885 us |
+| Compile | 1,171 us | 771-6,237 us |
+| Instantiate | 154 us | 91-195 us |
+| Execute | 75,609 us | 68,900-110,679 us |
 | Initial linear memory | 1,179,648 bytes | fixed |
 | Final linear memory | 17,760,256 bytes | fixed |
 
@@ -158,7 +158,8 @@ The native commands require macOS `/usr/bin/time -l`; RSS output and process
 timing are comparable only on an equivalent environment. Run each workload five
 times. Replace `RUN` in the commands below with the run number. Keep standard
 output and `/usr/bin/time` output separate so `ci/summarize-benchmarks.py` can
-aggregate them.
+aggregate them. Resource-stress and WASM metric runs reject a revision that differs
+from `HEAD` or a tracked worktree with uncommitted changes.
 
 From the repository root, build the native harness and run the owned corpus:
 
@@ -207,7 +208,7 @@ OCE=/path/to/open-control-engine
 Build and measure the generated resource-stress suite:
 
 ```bash
-REVISION=8715cc908c8a239a6f809621bb3ec26debe06534
+REVISION=d22f3f4f0deec62381bb2e30386a747ecaed9e30
 CXF_BENCHMARK_REVISION="$REVISION" \
   cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
     --example report_resource_stress
@@ -218,7 +219,7 @@ CXF_BENCHMARK_REVISION="$REVISION" \
 Build and measure the WASM smoke workload:
 
 ```bash
-REVISION=8715cc908c8a239a6f809621bb3ec26debe06534
+REVISION=d22f3f4f0deec62381bb2e30386a747ecaed9e30
 cargo +1.97.1 build --release --example wasm_cxf_smoke --locked \
   --target wasm32-unknown-unknown
 CXF_BENCHMARK_REVISION="$REVISION" node ci/run-wasm-smoke.mjs \
