@@ -458,6 +458,7 @@ mod enabled {
             });
         }
 
+        let request = input.to_vec();
         let started = Instant::now();
         let mut child = Command::new(executable)
             .arg(mode.argument())
@@ -466,16 +467,39 @@ mod enabled {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|error| ParentFailure::Io(error.to_string()))?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| ParentFailure::Io("worker stdin was not captured".to_owned()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| ParentFailure::Io("worker stdout was not captured".to_owned()))?;
-        let writer = spawn_writer(stdin, input.to_vec());
-        let reader = spawn_reader(stdout);
+        let stdin = match child.stdin.take() {
+            Some(stdin) => stdin,
+            None => {
+                stop_child(&mut child);
+                return Err(ParentFailure::Io(
+                    "worker stdin was not captured".to_owned(),
+                ));
+            }
+        };
+        let stdout = match child.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                stop_child(&mut child);
+                return Err(ParentFailure::Io(
+                    "worker stdout was not captured".to_owned(),
+                ));
+            }
+        };
+        let reader = match spawn_reader(stdout) {
+            Ok(reader) => reader,
+            Err(error) => {
+                stop_child(&mut child);
+                return Err(ParentFailure::Io(error.to_string()));
+            }
+        };
+        let writer = match spawn_writer(stdin, request) {
+            Ok(writer) => writer,
+            Err(error) => {
+                stop_child(&mut child);
+                let _ = join_io(reader);
+                return Err(ParentFailure::Io(error.to_string()));
+            }
+        };
 
         let status = loop {
             if started.elapsed() >= DEADLINE {
@@ -544,22 +568,31 @@ mod enabled {
         }
     }
 
-    fn spawn_writer(stdin: ChildStdin, input: Vec<u8>) -> JoinHandle<io::Result<()>> {
-        thread::spawn(move || {
-            let mut stdin = stdin;
-            stdin.write_all(&input)?;
-            stdin.flush()
-        })
+    fn stop_child(child: &mut Child) {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
-    fn spawn_reader(stdout: ChildStdout) -> JoinHandle<io::Result<Vec<u8>>> {
-        thread::spawn(move || {
-            let mut bytes = Vec::with_capacity(RESPONSE_LIMIT_BYTES + 1);
-            stdout
-                .take((RESPONSE_LIMIT_BYTES + 1) as u64)
-                .read_to_end(&mut bytes)?;
-            Ok(bytes)
-        })
+    fn spawn_writer(stdin: ChildStdin, input: Vec<u8>) -> io::Result<JoinHandle<io::Result<()>>> {
+        thread::Builder::new()
+            .name("cxf-worker-request".to_owned())
+            .spawn(move || {
+                let mut stdin = stdin;
+                stdin.write_all(&input)?;
+                stdin.flush()
+            })
+    }
+
+    fn spawn_reader(stdout: ChildStdout) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
+        thread::Builder::new()
+            .name("cxf-worker-response".to_owned())
+            .spawn(move || {
+                let mut bytes = Vec::with_capacity(RESPONSE_LIMIT_BYTES + 1);
+                stdout
+                    .take((RESPONSE_LIMIT_BYTES + 1) as u64)
+                    .read_to_end(&mut bytes)?;
+                Ok(bytes)
+            })
     }
 
     fn join_io<T>(handle: JoinHandle<io::Result<T>>) -> Result<T, ParentFailure> {
