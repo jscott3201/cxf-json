@@ -1,8 +1,8 @@
 use std::error::Error;
 
 use cxf_json::{
-    DocumentIri, DocumentIriError, ParseError, ParseOptions, SourceDocument, SourcePosition,
-    SourceRange,
+    AdmissionError, DocumentIri, DocumentIriError, ParseError, ParseOptions, SourceDocument,
+    SourcePosition, SourceRange,
 };
 
 #[test]
@@ -56,16 +56,113 @@ fn source_locations_are_zero_based_byte_values() {
 fn parse_options_default_to_no_document_iri() {
     let options = ParseOptions::new();
     assert_eq!(options.document_iri(), None);
+    assert_eq!(
+        options.max_input_bytes(),
+        ParseOptions::DEFAULT_MAX_INPUT_BYTES
+    );
+    assert_eq!(ParseOptions::DEFAULT_MAX_INPUT_BYTES, 1_048_576);
+    assert_eq!(ParseOptions::default(), options);
 
     let iri = DocumentIri::parse("https://example.test/input").expect("IRI should parse");
-    let options = options.with_document_iri(iri.clone());
+    let options = options
+        .with_document_iri(iri.clone())
+        .with_max_input_bytes(42);
     assert_eq!(options.document_iri(), Some(&iri));
+    assert_eq!(options.max_input_bytes(), 42);
+}
+
+#[test]
+fn input_byte_admission_has_an_inclusive_boundary() {
+    let options = ParseOptions::new().with_max_input_bytes(3);
+
+    assert_eq!(
+        SourceDocument::admit_bytes(b"ab", &options)
+            .expect("input below the limit should be admitted")
+            .as_bytes(),
+        b"ab"
+    );
+    assert_eq!(
+        SourceDocument::admit_bytes(b"abc", &options)
+            .expect("input at the limit should be admitted")
+            .as_bytes(),
+        b"abc"
+    );
+
+    let error = SourceDocument::admit_bytes(b"abcd", &options)
+        .expect_err("input above the limit should be rejected");
+    assert_eq!(error.actual_bytes(), 4);
+    assert_eq!(error.max_input_bytes(), 3);
+}
+
+#[test]
+fn zero_limit_admits_only_empty_input() {
+    let options = ParseOptions::new().with_max_input_bytes(0);
+
+    assert!(
+        SourceDocument::admit_bytes(b"", &options)
+            .expect("empty input should meet a zero-byte limit")
+            .is_empty()
+    );
+    assert_eq!(
+        SourceDocument::admit_bytes(b"x", &options)
+            .expect_err("nonempty input should exceed a zero-byte limit")
+            .actual_bytes(),
+        1
+    );
+}
+
+#[test]
+fn admission_checks_bytes_without_parsing() {
+    let options = ParseOptions::new().with_max_input_bytes(8);
+
+    assert_eq!(
+        SourceDocument::admit_bytes(b"{", &options)
+            .expect("malformed JSON is still within the admission boundary")
+            .as_bytes(),
+        b"{"
+    );
+    assert_eq!(
+        SourceDocument::admit_bytes(&[0xff], &options)
+            .expect("invalid UTF-8 is still within the admission boundary")
+            .as_bytes(),
+        &[0xff]
+    );
+}
+
+#[test]
+fn admission_copies_only_accepted_input() {
+    let options = ParseOptions::new().with_max_input_bytes(3);
+    let mut accepted = b"abc".to_vec();
+    let source = SourceDocument::admit_bytes(&accepted, &options)
+        .expect("input at the limit should be admitted");
+    accepted[0] = b'z';
+    assert_eq!(source.as_bytes(), b"abc");
+
+    let rejected = b"sensitive".to_vec();
+    let error = SourceDocument::admit_bytes(&rejected, &options)
+        .expect_err("oversized input should be rejected");
+    assert_eq!(rejected, b"sensitive");
+    assert!(!format!("{error:?}").contains("sensitive"));
+    assert!(!error.to_string().contains("sensitive"));
+}
+
+#[test]
+fn raw_source_construction_does_not_apply_parse_options() {
+    let bytes = vec![0; 4];
+    let pointer = bytes.as_ptr();
+    let source = SourceDocument::from_bytes(bytes);
+
+    assert_eq!(source.len(), 4);
+    assert_eq!(source.as_bytes().as_ptr(), pointer);
 }
 
 #[test]
 fn public_errors_implement_standard_error() {
     fn assert_error<T: Error>() {}
+    fn assert_copy<T: Copy>() {}
 
     assert_error::<DocumentIriError>();
+    assert_error::<AdmissionError>();
     assert_error::<ParseError>();
+    assert_copy::<AdmissionError>();
 }
