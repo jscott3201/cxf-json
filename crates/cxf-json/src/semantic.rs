@@ -109,7 +109,7 @@ pub(crate) fn ingest(
     ingest_preflighted(preflight, options).map_err(SemanticFailure::Semantic)
 }
 
-fn ingest_preflighted(
+pub(crate) fn ingest_preflighted(
     preflight: json::PreflightedJson,
     options: &ParseOptions,
 ) -> Result<SemanticDocument, SemanticError> {

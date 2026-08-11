@@ -43,8 +43,9 @@ partial graph after failure.
   package API.
 - W-011 remains open for backend diagnostic amplification, execution deadlines,
   and process-memory policy.
-- W-022 retains probe timings until the conditional production path has a clean-
-  revision five-run baseline and separate stage measurements.
-- A later W-007 slice must build a lossless ordered source view and RDF identity
-  join in the same parse. Processor blank-node identifiers are not source identity.
+- PR #18 records the first clean-revision production baseline. M1-C8 adds native
+  stage measurements; W-022 remains continuous regression work.
+- M1-C6 builds a lossless ordered source view. D-030 leaves the RDF identity join
+  absent until the backend provides source-correlated expanded IDs; processor
+  blank-node identifiers are not source identity.
 - D-021 keeps its W-009 or first-package-release expiry.

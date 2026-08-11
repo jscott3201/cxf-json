@@ -1,9 +1,8 @@
 # Benchmarks
 
-Status: Initial corpus and resource-stress baselines measured 2026-08-10. The
-first clean-revision native production semantic baseline was measured 2026-08-11.
-No separate production stage baseline, public parser, or performance threshold
-exists.
+Status: Initial corpus and resource-stress baselines measured 2026-08-10. Native
+production semantic end-to-end and stage baselines were measured 2026-08-11. No
+public parser or performance threshold exists.
 
 ## Scope
 
@@ -41,10 +40,11 @@ execution time, and linear memory before and after the smoke workload.
 | Node | 26.7.0 |
 | Git | 2.55.0 |
 | Build | `--release`, locked dependencies |
-| Runs | Five independent process executions per corpus, resource-stress, and WASM workload |
+| Runs | Five independent process executions per recorded baseline workload |
 | Corpus baseline revision | `7a69e58e821eb5ebf36a55dcc67d673ec11cd7a9` |
 | Resource-stress revision | `021b8d611fbdc488eeb09181ca9295e83aa6ab27` |
-| Production semantic baseline revision | `3b56d18c5161f00a5429e2e11f99baec30e72f00` |
+| Production semantic end-to-end baseline revision | `3b56d18c5161f00a5429e2e11f99baec30e72f00` |
+| Production semantic stage baseline revision | `4994d73accdd18ec439108e069b565199e30ba6e` |
 
 Corpus baseline evidence was read from this repository's Git object database at
 its instrumentation revision. External evidence was read from the local Open
@@ -193,7 +193,40 @@ preflight and ordered-tree construction, JSON-LD processing, budget checks, and 
 retention. The observation copies scalar metrics and drops the private ordered tree
 and retained quads before returning, so their teardown is also timed. The timer
 excludes workload generation, input hashing, and final report serialization. This
-revision does not report separate ordered/preflight and RDF times.
+revision does not report separate production stage times.
+
+### Native Stage Baseline
+
+Revision `4994d73accdd18ec439108e069b565199e30ba6e` adds native-only timing around
+the existing production split. `preflight_ordered` covers admission, source
+copying, UTF-8 and bounded JSON checks, duplicate-name rejection, structure
+metrics, and ordered-tree construction. `jsonld_quad_retention` covers
+post-preflight document-IRI handling, regular offline JSON-LD processing, budget
+checks, retained quads, scalar observation extraction, and private result teardown.
+
+The five reports have the same workload, source, structure, and RDF identity shown
+above. Every macOS time sidecar contains one V1 marker matching its JSON report's
+run ID, instrumentation revision, workload version, and input SHA-256.
+
+| Metric | Median | Range |
+|---|---:|---:|
+| Preflight and ordered construction | 1,552 us | 1,415-2,284 us |
+| JSON-LD and quad retention | 8,018 us | 7,032-8,323 us |
+| Combined stages | 9,543 us | 8,447-10,302 us |
+| Stage throughput | 13.74 MB/s | 12.73-15.52 MB/s |
+| End-to-end elapsed | 9,671 us | 8,455-10,310 us |
+| End-to-end throughput | 13.56 MB/s | 12.72-15.51 MB/s |
+| Maximum RSS | 26,771,456 bytes | 26,624,000-27,033,600 bytes |
+
+Combined-stage and stage-throughput distributions sum the two timings within each
+run before calculating the median and range. The two component medians therefore
+need not add to the combined median.
+
+The native release executable is 1,114,944 bytes at this revision. The two stage
+timers add clock reads and change the measurement method, so these values do not
+establish a performance change from the `3b56d18` end-to-end baseline. Stage and
+end-to-end values remain environment-specific compatibility evidence, not parser
+limits or release thresholds.
 
 ## Reproduction
 
@@ -215,7 +248,7 @@ CXF_JSON="$(git rev-parse --show-toplevel)"
 EVIDENCE_DIR="$CXF_JSON/target/benchmark-evidence"
 CORPUS_REVISION=7a69e58e821eb5ebf36a55dcc67d673ec11cd7a9
 STRESS_REVISION=021b8d611fbdc488eeb09181ca9295e83aa6ab27
-SEMANTIC_REVISION=3b56d18c5161f00a5429e2e11f99baec30e72f00
+SEMANTIC_REVISION=4994d73accdd18ec439108e069b565199e30ba6e
 CORPUS_WORKTREE="/tmp/cxf-json-${CORPUS_REVISION}"
 STRESS_WORKTREE="/tmp/cxf-json-${STRESS_REVISION}"
 SEMANTIC_WORKTREE="/tmp/cxf-json-${SEMANTIC_REVISION}"
@@ -329,7 +362,7 @@ revision:
   stat -f %z target/release/examples/report_production_semantic \
     > "$EVIDENCE_DIR/semantic-artifact-size.txt"
   for run in 1 2 3 4 5; do
-    /usr/bin/time -l target/release/examples/report_production_semantic \
+    LC_ALL=C /usr/bin/time -l target/release/examples/report_production_semantic \
       > "$EVIDENCE_DIR/semantic-${run}.json" \
       2> "$EVIDENCE_DIR/semantic-${run}.time"
   done
@@ -362,12 +395,12 @@ test-process bounds.
   subprocesses and browser/Node Workers remain the termination boundary.
 - M1-C6 uses this evidence for private emitted-quad and retained-term policy. The
   limits do not bound backend allocation or diagnostic amplification.
-- Native `/usr/bin/time` reports are paired with JSON reports by filename stem but
-  do not carry the run ID or revision. RSS provenance depends on preserving each
-  generated pair; self-identifying time reports remain W-022 work.
-- The conditional harness covers end-to-end production semantics. Separate
-  ordered/preflight and RDF stage measurements remain W-022 work. Private graph
-  indexing and semantic joins do not exist and therefore have no timing baseline.
+- Native production semantic time reports carry a V1 identity marker and are also
+  paired with JSON reports by filename stem. Corpus and resource-stress time
+  reports retain their historical stem-only method.
+- Production stage timing is native-only. The Node/WASM smoke remains an external
+  whole-module measurement. Private graph indexing and semantic joins do not exist
+  and therefore have no timing baseline.
 
 Update this file whenever a parser stage, corpus pin, dependency version, target,
 or benchmark method changes. Record the tested commit, environment, commands,

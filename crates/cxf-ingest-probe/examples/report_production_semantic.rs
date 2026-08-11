@@ -1,4 +1,4 @@
-#[cfg(cxf_json_semantic_harness)]
+#[cfg(all(cxf_json_semantic_harness, not(target_arch = "wasm32")))]
 mod enabled {
     use std::{
         io::{self, Write},
@@ -7,7 +7,7 @@ mod enabled {
     };
 
     use cxf_ingest_probe::production_harness::{
-        OutcomeKind, RETAINED_VALUES, VERIFIED_REVISION, WORKLOAD_VERSION, observe, options,
+        OutcomeKind, RETAINED_VALUES, VERIFIED_REVISION, WORKLOAD_VERSION, measure, options,
         retained_values_input, verify_instrumentation_revision,
     };
     use serde::Serialize;
@@ -30,6 +30,8 @@ mod enabled {
         emitted_rdf_quads: u64,
         retained_rdf_term_bytes: u64,
         returned_rdf_quads: u64,
+        preflight_ordered_micros: u128,
+        jsonld_quad_retention_micros: u128,
         elapsed_micros: u128,
     }
 
@@ -49,6 +51,15 @@ mod enabled {
                     eprintln!("failed to finish report: {error}");
                     return ExitCode::FAILURE;
                 }
+                if let Err(error) = output.flush() {
+                    eprintln!("failed to flush report: {error}");
+                    return ExitCode::FAILURE;
+                }
+                let mut time_output = io::stderr().lock();
+                if let Err(error) = write_time_marker(&mut time_output, &report) {
+                    eprintln!("failed to write time-report identity: {error}");
+                    return ExitCode::FAILURE;
+                }
                 ExitCode::SUCCESS
             }
             Err(error) => {
@@ -61,8 +72,9 @@ mod enabled {
     fn report() -> Result<Report, String> {
         let input = retained_values_input(RETAINED_VALUES);
         let started = Instant::now();
-        let observation = observe(&input, &options());
+        let measured = measure(&input, &options());
         let elapsed_micros = started.elapsed().as_micros();
+        let observation = measured.observation;
         if observation.outcome != OutcomeKind::Success
             || observation.source_matches_input != Some(true)
             || observation.returned_rdf_quads != RETAINED_VALUES as u64
@@ -76,6 +88,19 @@ mod enabled {
             return Err(format!(
                 "expected {RETAINED_VALUES} emitted quads, got {}",
                 metrics.emitted_rdf_quads
+            ));
+        }
+        let preflight_ordered_micros = measured.timing.preflight_ordered_micros;
+        let jsonld_quad_retention_micros = measured
+            .timing
+            .jsonld_quad_retention_micros
+            .ok_or_else(|| "successful observation is missing semantic timing".to_owned())?;
+        let combined_stage_micros = preflight_ordered_micros
+            .checked_add(jsonld_quad_retention_micros)
+            .ok_or_else(|| "combined semantic stage timing overflowed".to_owned())?;
+        if combined_stage_micros > elapsed_micros {
+            return Err(format!(
+                "combined stage time {combined_stage_micros} exceeds elapsed time {elapsed_micros}"
             ));
         }
         let started_at = SystemTime::now()
@@ -98,8 +123,22 @@ mod enabled {
             emitted_rdf_quads: metrics.emitted_rdf_quads,
             retained_rdf_term_bytes: metrics.retained_rdf_term_bytes,
             returned_rdf_quads: observation.returned_rdf_quads,
+            preflight_ordered_micros,
+            jsonld_quad_retention_micros,
             elapsed_micros,
         })
+    }
+
+    fn write_time_marker(writer: &mut impl Write, report: &Report) -> io::Result<()> {
+        writeln!(
+            writer,
+            "CXF_JSON_TIME_V1 run_id={} instrumentation_revision={} workload_version={} input_sha256={}",
+            report.run_id,
+            report.instrumentation_revision,
+            report.workload_version,
+            report.input_sha256
+        )?;
+        writer.flush()
     }
 
     fn sha256(input: &[u8]) -> String {
@@ -128,16 +167,41 @@ mod enabled {
             assert_eq!(report.emitted_rdf_quads, RETAINED_VALUES as u64);
             assert_eq!(report.returned_rdf_quads, RETAINED_VALUES as u64);
             assert_eq!(report.input_sha256.len(), 64);
+            assert!(report.preflight_ordered_micros > 0);
+            assert!(report.jsonld_quad_retention_micros > 0);
+            assert!(
+                report.preflight_ordered_micros + report.jsonld_quad_retention_micros
+                    <= report.elapsed_micros
+            );
+        }
+
+        #[test]
+        fn time_marker_carries_the_report_identity() {
+            let report = report().expect("production semantic workload should succeed");
+            let mut marker = Vec::new();
+
+            write_time_marker(&mut marker, &report).expect("marker should serialize");
+
+            assert_eq!(
+                String::from_utf8(marker).expect("marker should be UTF-8"),
+                format!(
+                    "CXF_JSON_TIME_V1 run_id={} instrumentation_revision={} workload_version={} input_sha256={}\n",
+                    report.run_id,
+                    report.instrumentation_revision,
+                    report.workload_version,
+                    report.input_sha256
+                )
+            );
         }
     }
 }
 
-#[cfg(cxf_json_semantic_harness)]
+#[cfg(all(cxf_json_semantic_harness, not(target_arch = "wasm32")))]
 fn main() -> std::process::ExitCode {
     enabled::main()
 }
 
-#[cfg(not(cxf_json_semantic_harness))]
+#[cfg(any(not(cxf_json_semantic_harness), target_arch = "wasm32"))]
 fn main() -> std::process::ExitCode {
     eprintln!("set CXF_JSON_SEMANTIC_HARNESS=1 to build the production semantic report");
     std::process::ExitCode::FAILURE

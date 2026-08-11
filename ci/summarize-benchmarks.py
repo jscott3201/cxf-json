@@ -4,12 +4,23 @@ import re
 import statistics
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 
-rss_pattern = re.compile(r"^\s*(\d+)\s+maximum resident set size$", re.MULTILINE)
+rss_pattern = re.compile(
+    r"^[ \t]*(\d+)[ \t]+maximum resident set size$", re.MULTILINE
+)
+semantic_run_id_pattern = re.compile(r"[0-9a-f]+-[0-9a-f]+")
+semantic_time_marker_pattern = re.compile(
+    r"CXF_JSON_TIME_V1 "
+    r"run_id=([0-9a-f]+-[0-9a-f]+) "
+    r"instrumentation_revision=([0-9a-f]{40}) "
+    r"workload_version=([0-9]+) "
+    r"input_sha256=([0-9a-f]{64})"
+)
 
 
-def fail(message):
+def fail(message: str) -> NoReturn:
     print(f"benchmark summary error: {message}", file=sys.stderr)
     sys.exit(1)
 
@@ -55,6 +66,35 @@ def validate_time_pairs(report_paths, time_paths):
     for report, time_report in zip(report_paths, time_paths):
         if Path(report).stem != Path(time_report).stem:
             fail(f"report and time-report names do not match: {report}, {time_report}")
+
+
+def positive_integer(report, field):
+    if field not in report or type(report[field]) is not int or report[field] <= 0:
+        fail(f"{field} must be a positive integer")
+    return report[field]
+
+
+def semantic_time_rss(report, path):
+    text = Path(path).read_text()
+    marker_lines = [line for line in text.splitlines() if "CXF_JSON_TIME_" in line]
+    if len(marker_lines) != 1:
+        fail(f"semantic time report must contain exactly one V1 identity marker: {path}")
+    marker = semantic_time_marker_pattern.fullmatch(marker_lines[0])
+    if marker is None:
+        fail(f"semantic time report contains a malformed identity marker: {path}")
+    expected = (
+        report["run_id"],
+        report["instrumentation_revision"],
+        str(report["workload_version"]),
+        report["input_sha256"],
+    )
+    if marker.groups() != expected:
+        fail(f"semantic time-report identity does not match its JSON report: {path}")
+
+    rss_matches = list(rss_pattern.finditer(text))
+    if len(rss_matches) != 1:
+        fail(f"semantic time report must contain exactly one maximum RSS value: {path}")
+    return int(rss_matches[0].group(1))
 
 
 def file_identity(report):
@@ -285,24 +325,56 @@ def summarize_semantic_ingestion(reports, time_reports):
         "returned_rdf_quads",
     ]
     stable = {field: stable_value(reports, field) for field in stable_fields}
-    if re.fullmatch(r"[0-9a-f]{64}", stable["input_sha256"]) is None:
+    for field in ["workload_version", "retained_values", "input_bytes"]:
+        if type(stable[field]) is not int or stable[field] <= 0:
+            fail(f"{field} must be a positive integer")
+    for field in [
+        "max_nesting_depth",
+        "max_object_members",
+        "total_values",
+        "decoded_member_name_bytes",
+        "emitted_rdf_quads",
+        "retained_rdf_term_bytes",
+        "returned_rdf_quads",
+    ]:
+        if type(stable[field]) is not int or stable[field] < 0:
+            fail(f"{field} must be a non-negative integer")
+    if not all(
+        isinstance(report["run_id"], str)
+        and semantic_run_id_pattern.fullmatch(report["run_id"]) is not None
+        for report in reports
+    ):
+        fail("semantic-ingestion run_id has an invalid format")
+    if not isinstance(stable["input_sha256"], str) or re.fullmatch(
+        r"[0-9a-f]{64}", stable["input_sha256"]
+    ) is None:
         fail("input_sha256 is not a lowercase SHA-256 digest")
-    if stable["outcome"] != "success" or not stable["source_matches_input"]:
+    if stable["outcome"] != "success" or stable["source_matches_input"] is not True:
         fail("semantic-ingestion reports must describe source-preserving success")
     if stable["returned_rdf_quads"] != stable["emitted_rdf_quads"]:
         fail("returned and emitted RDF quad counts differ")
-    elapsed = [report["elapsed_micros"] for report in reports]
-    if any(value == 0 for value in elapsed):
-        fail("semantic-ingestion elapsed time is zero")
+    elapsed = [positive_integer(report, "elapsed_micros") for report in reports]
+    preflight_ordered = [
+        positive_integer(report, "preflight_ordered_micros") for report in reports
+    ]
+    jsonld_quad_retention = [
+        positive_integer(report, "jsonld_quad_retention_micros")
+        for report in reports
+    ]
+    combined_stage = [
+        preflight + jsonld
+        for preflight, jsonld in zip(preflight_ordered, jsonld_quad_retention)
+    ]
+    if any(combined > total for combined, total in zip(combined_stage, elapsed)):
+        fail("combined semantic stage time exceeds elapsed time")
 
-    rss = []
-    for path in time_reports:
-        match = rss_pattern.search(Path(path).read_text())
-        if match is None:
-            fail(f"maximum RSS is missing from {path}")
-        rss.append(int(match.group(1)))
+    rss = [
+        semantic_time_rss(report, path)
+        for report, path in zip(reports, time_reports)
+    ]
 
     throughput = [stable["input_bytes"] / value for value in elapsed]
+    stage_throughput = [stable["input_bytes"] / value for value in combined_stage]
     return {
         "runs": len(reports),
         "instrumentation_revision": instrumentation_revision,
@@ -332,6 +404,10 @@ def summarize_semantic_ingestion(reports, time_reports):
                 "returned_rdf_quads",
             ]
         },
+        "preflight_ordered_micros": distribution(preflight_ordered),
+        "jsonld_quad_retention_micros": distribution(jsonld_quad_retention),
+        "combined_stage_micros": distribution(combined_stage),
+        "stage_throughput_mb_s": distribution(stage_throughput),
         "elapsed_micros": distribution(elapsed),
         "throughput_mb_s": distribution(throughput),
         "maximum_rss_bytes": distribution(rss),

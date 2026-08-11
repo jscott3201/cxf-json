@@ -1,3 +1,6 @@
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+
 use crate::{
     ParseOptions, json,
     semantic::{self, SemanticFailure, SemanticFailureKind, SemanticMetrics},
@@ -38,8 +41,62 @@ pub struct Observation {
     pub metrics: Option<Metrics>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeTiming {
+    pub preflight_ordered_micros: u128,
+    pub jsonld_quad_retention_micros: Option<u128>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MeasuredObservation {
+    pub observation: Observation,
+    pub timing: NativeTiming,
+}
+
 pub fn observe(input: &[u8], options: &ParseOptions) -> Observation {
-    match semantic::ingest(input, options) {
+    observation(input, semantic::ingest(input, options))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn measure(input: &[u8], options: &ParseOptions) -> MeasuredObservation {
+    let preflight_started = Instant::now();
+    let preflight = match json::admit_and_preflight(input, options) {
+        Ok(preflight) => preflight,
+        Err(failure) => {
+            let observation = observation(input, Err(SemanticFailure::Preflight(failure)));
+            return MeasuredObservation {
+                observation,
+                timing: NativeTiming {
+                    preflight_ordered_micros: preflight_started.elapsed().as_micros(),
+                    jsonld_quad_retention_micros: None,
+                },
+            };
+        }
+    };
+    let preflight_ordered_micros = preflight_started.elapsed().as_micros();
+
+    let semantic_started = Instant::now();
+    let result =
+        semantic::ingest_preflighted(preflight, options).map_err(SemanticFailure::Semantic);
+    let observation = observation(input, result);
+    let jsonld_quad_retention_micros = semantic_started.elapsed().as_micros();
+
+    MeasuredObservation {
+        observation,
+        timing: NativeTiming {
+            preflight_ordered_micros,
+            jsonld_quad_retention_micros: Some(jsonld_quad_retention_micros),
+        },
+    }
+}
+
+fn observation(
+    input: &[u8],
+    result: Result<semantic::SemanticDocument, SemanticFailure>,
+) -> Observation {
+    match result {
         Ok(document) => Observation {
             outcome: OutcomeKind::Success,
             source_matches_input: Some(document.source_document().as_bytes() == input),
@@ -146,5 +203,45 @@ mod tests {
         assert_eq!(quad_limit.source_matches_input, Some(true));
         assert_eq!(quad_limit.returned_rdf_quads, 0);
         assert_eq!(quad_limit.metrics.unwrap().emitted_rdf_quads, 1);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn measured_observations_match_the_untimed_path() {
+        assert_measurement(
+            br#"{"@id":"https://example.test/s","https://example.test/p":"v"}"#,
+            &options(),
+            true,
+        );
+        assert_measurement(b"{}", &options().with_max_input_bytes(1), false);
+        assert_measurement(b"{", &options(), false);
+        assert_measurement(b"{}", &ParseOptions::new(), true);
+        assert_measurement(
+            br#"{"@context":"https://remote.example/context"}"#,
+            &options(),
+            true,
+        );
+        assert_measurement(
+            br#"{"@id":"https://example.test/s","https://example.test/p":"v"}"#,
+            &options().with_max_rdf_quads(0),
+            true,
+        );
+        assert_measurement(
+            br#"{"@id":"https://example.test/s","https://example.test/p":"v"}"#,
+            &options().with_max_retained_rdf_term_bytes(0),
+            true,
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn assert_measurement(input: &[u8], options: &ParseOptions, semantic_stage_ran: bool) {
+        let expected = observe(input, options);
+        let measured = measure(input, options);
+
+        assert_eq!(measured.observation, expected);
+        assert_eq!(
+            measured.timing.jsonld_quad_retention_micros.is_some(),
+            semantic_stage_ran
+        );
     }
 }
