@@ -1,17 +1,17 @@
 # Benchmarks
 
-Status: Initial corpus and resource-stress baselines measured 2026-08-10. M1-C6
-adds a private production semantic stage and conditional native, fuzz, and
-Node/WASM evidence harnesses. No clean-revision production timing baseline, public
-parser, or performance threshold exists.
+Status: Initial corpus and resource-stress baselines measured 2026-08-10. The
+first clean-revision native production semantic baseline was measured 2026-08-11.
+No separate production stage baseline, public parser, or performance threshold
+exists.
 
 ## Scope
 
-These measurements cover the qualified `cxf-ingest-probe` process. M1-C6 adds
-private semantic ingestion to `cxf-json`. The recorded numbers still cover only the
-probe; the production harness has no committed five-run baseline yet. The probe
-results establish instrumentation and a comparison format for later parser stages.
-They do not prove resource safety or represent package performance.
+These measurements cover the qualified `cxf-ingest-probe` process and the private
+production semantic stage in `cxf-json`. Probe results establish the comparison
+format and historical pre-production baseline. Production results cover the
+conditional native harness, not a supported package API. They do not prove resource
+safety or represent package performance.
 
 The corpus harness reports:
 
@@ -44,6 +44,7 @@ execution time, and linear memory before and after the smoke workload.
 | Runs | Five independent process executions per corpus, resource-stress, and WASM workload |
 | Corpus baseline revision | `7a69e58e821eb5ebf36a55dcc67d673ec11cd7a9` |
 | Resource-stress revision | `021b8d611fbdc488eeb09181ca9295e83aa6ab27` |
+| Production semantic baseline revision | `3b56d18c5161f00a5429e2e11f99baec30e72f00` |
 
 Corpus baseline evidence was read from this repository's Git object database at
 its instrumentation revision. External evidence was read from the local Open
@@ -168,31 +169,60 @@ RDF retention. The semantic fuzz target also selects the default, zero-quad, and
 zero-term policies. These harness controls do not bound OxJSONLD work inside one
 iterator step.
 
-No production numbers are recorded until five reports are built from one clean
-committed revision and aggregated with the commands below.
+The first native production baseline was built from clean detached revision
+`3b56d18c5161f00a5429e2e11f99baec30e72f00`. Five independent process reports
+shared this workload identity:
+
+| Input bytes | Input SHA-256 | Retained values | Max depth | Max members | Total values | Member-name bytes | Emitted/returned quads | RDF term bytes |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| 131,119 | `1bffb6c3fc7998ed80ada02b562c4b553153b2589d2eed46cdbab203321930a1` | 32,768 | 2 | 2 | 32,771 | 19 | 32,768 | 2,359,296 |
+
+Times are microseconds. Each value reports the median and minimum-to-maximum range
+across five runs. Throughput uses decimal megabytes. Maximum RSS covers the whole
+process and does not measure parser allocations or live retained memory.
+
+| Elapsed | Throughput | Maximum RSS |
+|---:|---:|---:|
+| 18,936 (14,467-23,737) | 6.92 MB/s (5.52-9.06) | 26,738,688 bytes (26,574,848-28,426,240) |
+
+The native release executable is 1,110,976 bytes at this revision.
+
+The timer starts after workload generation and ends when the production observation
+returns. It includes option construction, byte admission and source copying,
+preflight and ordered-tree construction, JSON-LD processing, budget checks, and RDF
+retention. The observation copies scalar metrics and drops the private ordered tree
+and retained quads before returning, so their teardown is also timed. The timer
+excludes workload generation, input hashing, and final report serialization. This
+revision does not report separate ordered/preflight and RDF times.
 
 ## Reproduction
 
 The native commands require macOS `/usr/bin/time -l`; RSS output and process
-timing are comparable only on an equivalent environment. Run each workload five
-times. Replace `RUN` in the commands below with the run number. Keep standard
-output and `/usr/bin/time` output separate so `ci/summarize-benchmarks.py` can
-aggregate them. Revision-bound metric builds and runs reject a revision that
-differs from `HEAD` or a worktree with tracked or untracked changes.
+timing are comparable only on an equivalent environment. Run each baselined
+workload five times. Replace `RUN` in the commands below with the run number. Keep
+standard output and `/usr/bin/time` output separate so
+`ci/summarize-benchmarks.py` can aggregate them. Revision-bound metric builds and
+runs reject a revision that differs from `HEAD` or a worktree with tracked or
+untracked changes. The production WASM command remains a smoke run; no five-run
+production WASM baseline is recorded.
 
-Create detached worktrees for both historical instrumentation revisions and one
-absolute evidence directory. The commands below use these variables:
+Create detached worktrees for both historical instrumentation revisions and the
+production semantic revision, plus one absolute evidence directory. The commands
+below use these variables:
 
 ```bash
 CXF_JSON="$(git rev-parse --show-toplevel)"
 EVIDENCE_DIR="$CXF_JSON/target/benchmark-evidence"
 CORPUS_REVISION=7a69e58e821eb5ebf36a55dcc67d673ec11cd7a9
 STRESS_REVISION=021b8d611fbdc488eeb09181ca9295e83aa6ab27
+SEMANTIC_REVISION=3b56d18c5161f00a5429e2e11f99baec30e72f00
 CORPUS_WORKTREE="/tmp/cxf-json-${CORPUS_REVISION}"
 STRESS_WORKTREE="/tmp/cxf-json-${STRESS_REVISION}"
+SEMANTIC_WORKTREE="/tmp/cxf-json-${SEMANTIC_REVISION}"
 mkdir -p "$EVIDENCE_DIR"
 git -C "$CXF_JSON" worktree add --detach "$CORPUS_WORKTREE" "$CORPUS_REVISION"
 git -C "$CXF_JSON" worktree add --detach "$STRESS_WORKTREE" "$STRESS_REVISION"
+git -C "$CXF_JSON" worktree add --detach "$SEMANTIC_WORKTREE" "$SEMANTIC_REVISION"
 ```
 
 Build the corpus harness from its detached worktree and run the owned corpus:
@@ -286,31 +316,35 @@ python3 "$STRESS_WORKTREE/ci/summarize-benchmarks.py" wasm \
   "$EVIDENCE_DIR"/wasm-{1,2,3,4,5}.json
 ```
 
-Build and measure the private production semantic path from a clean current
+Build and measure the private production semantic path from its recorded baseline
 revision:
 
 ```bash
-REVISION="$(git rev-parse HEAD)"
-CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="$REVISION" \
-  cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
-    --no-default-features --features production-semantic-harness \
-    --example report_production_semantic
-for run in 1 2 3 4 5; do
-  /usr/bin/time -l target/release/examples/report_production_semantic \
-    > "$EVIDENCE_DIR/semantic-${run}.json" \
-    2> "$EVIDENCE_DIR/semantic-${run}.time"
-done
-python3 ci/summarize-benchmarks.py semantic-ingestion \
-  "$EVIDENCE_DIR"/semantic-{1,2,3,4,5}.json \
-  --times "$EVIDENCE_DIR"/semantic-{1,2,3,4,5}.time
+(
+  cd "$SEMANTIC_WORKTREE"
+  CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="$SEMANTIC_REVISION" \
+    cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
+      --no-default-features --features production-semantic-harness \
+      --example report_production_semantic
+  stat -f %z target/release/examples/report_production_semantic \
+    > "$EVIDENCE_DIR/semantic-artifact-size.txt"
+  for run in 1 2 3 4 5; do
+    /usr/bin/time -l target/release/examples/report_production_semantic \
+      > "$EVIDENCE_DIR/semantic-${run}.json" \
+      2> "$EVIDENCE_DIR/semantic-${run}.time"
+  done
+  python3 ci/summarize-benchmarks.py semantic-ingestion \
+    "$EVIDENCE_DIR"/semantic-{1,2,3,4,5}.json \
+    --times "$EVIDENCE_DIR"/semantic-{1,2,3,4,5}.time
 
-CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="$REVISION" \
-  cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
-    --no-default-features --features production-semantic-harness \
-    --example wasm_production_semantic --target wasm32-unknown-unknown
-CXF_BENCHMARK_REVISION="$REVISION" node ci/run-wasm-smoke.mjs \
-  target/wasm32-unknown-unknown/release/examples/wasm_production_semantic.wasm \
-  --metrics
+  CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="$SEMANTIC_REVISION" \
+    cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
+      --no-default-features --features production-semantic-harness \
+      --example wasm_production_semantic --target wasm32-unknown-unknown
+  CXF_BENCHMARK_REVISION="$SEMANTIC_REVISION" node ci/run-wasm-smoke.mjs \
+    target/wasm32-unknown-unknown/release/examples/wasm_production_semantic.wasm \
+    --metrics
+)
 ```
 
 `fuzz/README.md` records the pinned coverage-guided parser commands and their
@@ -328,9 +362,12 @@ test-process bounds.
   subprocesses and browser/Node Workers remain the termination boundary.
 - M1-C6 uses this evidence for private emitted-quad and retained-term policy. The
   limits do not bound backend allocation or diagnostic amplification.
-- The conditional harness covers end-to-end production semantics. A clean-revision
-  baseline and separate stage measurements for ordered source construction,
-  private graph indexing, and semantic joins remain W-007/W-022 work.
+- Native `/usr/bin/time` reports are paired with JSON reports by filename stem but
+  do not carry the run ID or revision. RSS provenance depends on preserving each
+  generated pair; self-identifying time reports remain W-022 work.
+- The conditional harness covers end-to-end production semantics. Separate
+  ordered/preflight and RDF stage measurements remain W-022 work. Private graph
+  indexing and semantic joins do not exist and therefore have no timing baseline.
 
 Update this file whenever a parser stage, corpus pin, dependency version, target,
 or benchmark method changes. Record the tested commit, environment, commands,

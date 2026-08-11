@@ -192,7 +192,8 @@ class SummaryTests(unittest.TestCase):
 
     def test_rejects_semantic_graph_count_mismatch(self):
         reports = [semantic_report(str(run)) for run in range(5)]
-        reports[4]["returned_rdf_quads"] = 1
+        for report in reports:
+            report["returned_rdf_quads"] = 1
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             benchmarks.summarize_semantic_ingestion(reports, ["unused"] * 5)
 
