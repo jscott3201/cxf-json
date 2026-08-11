@@ -92,7 +92,8 @@ enforces exact WASM dependency allowlists.
 
 [`benchmarks.md`](benchmarks.md) records the macOS parser/process baseline,
 environment details, corpus identity, reproduction commands, and known gaps. The
-current numbers measure the evidence probe, not a production parser or release
+current numbers cover the evidence probe and a conditional private production
+semantic harness, not a supported parser, package-performance claim, or release
 threshold.
 
 ## Specification
