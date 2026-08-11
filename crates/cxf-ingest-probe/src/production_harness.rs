@@ -5,6 +5,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use cxf_json::test_support::{MeasuredObservation, NativeTiming};
 pub use cxf_json::test_support::{Metrics, Observation, OutcomeKind};
 use cxf_json::{DocumentIri, ParseOptions, test_support};
 
@@ -24,6 +26,11 @@ pub fn options() -> ParseOptions {
 
 pub fn observe(input: &[u8], options: &ParseOptions) -> Observation {
     test_support::observe(input, options)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn measure(input: &[u8], options: &ParseOptions) -> MeasuredObservation {
+    test_support::measure(input, options)
 }
 
 pub fn retained_values_input(values: usize) -> Vec<u8> {
