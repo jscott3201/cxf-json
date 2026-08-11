@@ -158,24 +158,40 @@ The native commands require macOS `/usr/bin/time -l`; RSS output and process
 timing are comparable only on an equivalent environment. Run each workload five
 times. Replace `RUN` in the commands below with the run number. Keep standard
 output and `/usr/bin/time` output separate so `ci/summarize-benchmarks.py` can
-aggregate them. Resource-stress and WASM metric runs reject a revision that differs
-from `HEAD` or a tracked worktree with uncommitted changes.
+aggregate them. Resource-stress and WASM metric builds and runs reject a revision
+that differs from `HEAD` or a tracked worktree with uncommitted changes.
 
-From the repository root, build the native harness and run the owned corpus:
+Create detached worktrees for both historical instrumentation revisions and one
+absolute evidence directory. The commands below use these variables:
 
 ```bash
-CXF_JSON="$(pwd)"
-REVISION=7a69e58e821eb5ebf36a55dcc67d673ec11cd7a9
-CXF_BENCHMARK_REVISION="$REVISION" \
-  cargo +1.97.1 build --release --example qualify_cxf_corpus --locked
-/usr/bin/time -l target/release/examples/qualify_cxf_corpus \
-  --git-root "$CXF_JSON" \
-  --git-origin git@github.com:jscott3201/cxf-json.git \
-  --git-commit "$REVISION" \
-  --expect-failure "$CXF_JSON/crates/cxf-ingest-probe/tests/fixtures/remote-context.jsonld" \
-  "No LoadDocumentCallback has been set to load remote contexts" \
-  "$CXF_JSON/crates/cxf-ingest-probe/tests/fixtures" \
-  > "owned-RUN.json" 2> "owned-RUN.time"
+CXF_JSON="$(git rev-parse --show-toplevel)"
+EVIDENCE_DIR="$CXF_JSON/target/benchmark-evidence"
+CORPUS_REVISION=7a69e58e821eb5ebf36a55dcc67d673ec11cd7a9
+STRESS_REVISION=021b8d611fbdc488eeb09181ca9295e83aa6ab27
+CORPUS_WORKTREE="/tmp/cxf-json-${CORPUS_REVISION}"
+STRESS_WORKTREE="/tmp/cxf-json-${STRESS_REVISION}"
+mkdir -p "$EVIDENCE_DIR"
+git -C "$CXF_JSON" worktree add --detach "$CORPUS_WORKTREE" "$CORPUS_REVISION"
+git -C "$CXF_JSON" worktree add --detach "$STRESS_WORKTREE" "$STRESS_REVISION"
+```
+
+Build the corpus harness from its detached worktree and run the owned corpus:
+
+```bash
+(
+  cd "$CORPUS_WORKTREE"
+  CXF_BENCHMARK_REVISION="$CORPUS_REVISION" \
+    cargo +1.97.1 build --release --example qualify_cxf_corpus --locked
+  /usr/bin/time -l target/release/examples/qualify_cxf_corpus \
+    --git-root "$CORPUS_WORKTREE" \
+    --git-origin git@github.com:jscott3201/cxf-json.git \
+    --git-commit "$CORPUS_REVISION" \
+    --expect-failure "$CORPUS_WORKTREE/crates/cxf-ingest-probe/tests/fixtures/remote-context.jsonld" \
+    "No LoadDocumentCallback has been set to load remote contexts" \
+    "$CORPUS_WORKTREE/crates/cxf-ingest-probe/tests/fixtures" \
+    > "$EVIDENCE_DIR/owned-RUN.json" 2> "$EVIDENCE_DIR/owned-RUN.time"
+)
 ```
 
 Using the revision-bound native binary built above, run the pinned external corpus
@@ -183,66 +199,72 @@ from a separately acquired checkout:
 
 ```bash
 OCE=/path/to/open-control-engine
-/usr/bin/time -l target/release/examples/qualify_cxf_corpus \
+/usr/bin/time -l "$CORPUS_WORKTREE/target/release/examples/qualify_cxf_corpus" \
   --git-root "$OCE" \
   --git-origin git@github.com:jscott3201/open-control-engine.git \
   --git-commit 8fbec096a682b3ff930dcdaa89c6f0a83bf8cd67 \
   --expect-failure "$OCE/crates/oce-cxf/tests/fixtures/node_scoped_contexts.jsonld" \
   "No LoadDocumentCallback has been set to load remote contexts" \
   "$OCE/crates/oce-cxf/tests/fixtures" \
-  > "oce-RUN.json" 2> "oce-RUN.time"
+  > "$EVIDENCE_DIR/oce-RUN.json" 2> "$EVIDENCE_DIR/oce-RUN.time"
 ```
 
 Run the producer corpus under the same pin:
 
 ```bash
 OCE=/path/to/open-control-engine
-/usr/bin/time -l target/release/examples/qualify_cxf_corpus \
+/usr/bin/time -l "$CORPUS_WORKTREE/target/release/examples/qualify_cxf_corpus" \
   --git-root "$OCE" \
   --git-origin git@github.com:jscott3201/open-control-engine.git \
   --git-commit 8fbec096a682b3ff930dcdaa89c6f0a83bf8cd67 \
   "$OCE/third_party/modelica-buildings-cdl/cxf" \
-  > "buildings-RUN.json" 2> "buildings-RUN.time"
+  > "$EVIDENCE_DIR/buildings-RUN.json" 2> "$EVIDENCE_DIR/buildings-RUN.time"
 ```
 
 Build and measure the generated resource-stress suite:
 
 ```bash
-REVISION=021b8d611fbdc488eeb09181ca9295e83aa6ab27
-BENCHMARK_WORKTREE="/tmp/cxf-json-${REVISION}"
-git worktree add --detach "$BENCHMARK_WORKTREE" "$REVISION"
-cd "$BENCHMARK_WORKTREE"
-CXF_BENCHMARK_REVISION="$REVISION" \
-  cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
-    --example report_resource_stress
-/usr/bin/time -l target/release/examples/report_resource_stress \
-  > "stress-RUN.json" 2> "stress-RUN.time"
+(
+  cd "$STRESS_WORKTREE"
+  CXF_BENCHMARK_REVISION="$STRESS_REVISION" \
+    cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
+      --example report_resource_stress
+  /usr/bin/time -l target/release/examples/report_resource_stress \
+    > "$EVIDENCE_DIR/stress-RUN.json" 2> "$EVIDENCE_DIR/stress-RUN.time"
+)
 ```
 
 Build and measure the WASM smoke workload:
 
 ```bash
-REVISION=021b8d611fbdc488eeb09181ca9295e83aa6ab27
-CXF_BENCHMARK_REVISION="$REVISION" \
-  cargo +1.97.1 build --release --example wasm_cxf_smoke --locked \
-    --target wasm32-unknown-unknown
-CXF_BENCHMARK_REVISION="$REVISION" node ci/run-wasm-smoke.mjs \
-  target/wasm32-unknown-unknown/release/examples/wasm_cxf_smoke.wasm \
-  --metrics > "wasm-RUN.json"
+(
+  cd "$STRESS_WORKTREE"
+  CXF_BENCHMARK_REVISION="$STRESS_REVISION" \
+    cargo +1.97.1 build --release --example wasm_cxf_smoke --locked \
+      --target wasm32-unknown-unknown
+  CXF_BENCHMARK_REVISION="$STRESS_REVISION" node ci/run-wasm-smoke.mjs \
+    target/wasm32-unknown-unknown/release/examples/wasm_cxf_smoke.wasm \
+    --metrics > "$EVIDENCE_DIR/wasm-RUN.json"
+)
 ```
 
 Aggregate the five reports for each workload:
 
 ```bash
-python3 ci/summarize-benchmarks.py corpus owned-{1,2,3,4,5}.json \
-  --times owned-{1,2,3,4,5}.time
-python3 ci/summarize-benchmarks.py corpus oce-{1,2,3,4,5}.json \
-  --times oce-{1,2,3,4,5}.time
-python3 ci/summarize-benchmarks.py corpus buildings-{1,2,3,4,5}.json \
-  --times buildings-{1,2,3,4,5}.time
-python3 ci/summarize-benchmarks.py resource-stress stress-{1,2,3,4,5}.json \
-  --times stress-{1,2,3,4,5}.time
-python3 ci/summarize-benchmarks.py wasm wasm-{1,2,3,4,5}.json
+python3 "$STRESS_WORKTREE/ci/summarize-benchmarks.py" corpus \
+  "$EVIDENCE_DIR"/owned-{1,2,3,4,5}.json \
+  --times "$EVIDENCE_DIR"/owned-{1,2,3,4,5}.time
+python3 "$STRESS_WORKTREE/ci/summarize-benchmarks.py" corpus \
+  "$EVIDENCE_DIR"/oce-{1,2,3,4,5}.json \
+  --times "$EVIDENCE_DIR"/oce-{1,2,3,4,5}.time
+python3 "$STRESS_WORKTREE/ci/summarize-benchmarks.py" corpus \
+  "$EVIDENCE_DIR"/buildings-{1,2,3,4,5}.json \
+  --times "$EVIDENCE_DIR"/buildings-{1,2,3,4,5}.time
+python3 "$STRESS_WORKTREE/ci/summarize-benchmarks.py" resource-stress \
+  "$EVIDENCE_DIR"/stress-{1,2,3,4,5}.json \
+  --times "$EVIDENCE_DIR"/stress-{1,2,3,4,5}.time
+python3 "$STRESS_WORKTREE/ci/summarize-benchmarks.py" wasm \
+  "$EVIDENCE_DIR"/wasm-{1,2,3,4,5}.json
 ```
 
 `fuzz/README.md` records the pinned coverage-guided parser commands and their
