@@ -53,6 +53,7 @@ version = "0.0.0"
 dependencies = [
  "cxf-json",
  "getrandom",
+ "libc",
  "oxjsonld",
  "oxrdf",
  "serde",

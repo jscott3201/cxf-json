@@ -42,7 +42,8 @@ partial graph after failure.
   the doc-hidden observation module described by the profile; it is not a supported
   package API.
 - W-011 remains open for backend diagnostic amplification, execution deadlines,
-  and process-memory policy.
+  and process-memory policy. M1-C9 tests one Linux worker mechanism under project
+  instrumentation without closing D-029 or adding parser options.
 - PR #18 records the first clean-revision production baseline. M1-C8 adds native
   stage measurements; W-022 remains continuous regression work.
 - M1-C6 builds a lossless ordered source view. D-030 leaves the RDF identity join

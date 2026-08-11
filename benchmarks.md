@@ -1,8 +1,9 @@
 # Benchmarks
 
 Status: Initial corpus and resource-stress baselines measured 2026-08-10. Native
-production semantic end-to-end and stage baselines were measured 2026-08-11. No
-public parser or performance threshold exists.
+production semantic end-to-end and stage baselines were measured 2026-08-11. A
+Linux worker-containment evidence harness is under CI. No public parser or
+performance threshold exists.
 
 ## Scope
 
@@ -11,6 +12,10 @@ production semantic stage in `cxf-json`. Probe results establish the comparison
 format and historical pre-production baseline. Production results cover the
 conditional native harness, not a supported package API. They do not prove resource
 safety or represent package performance.
+
+The Linux worker-containment report tests one external process boundary around the
+private semantic path. It is mechanism evidence, not a cross-platform host API or a
+resource-safety result.
 
 The corpus harness reports:
 
@@ -228,6 +233,26 @@ establish a performance change from the `3b56d18` end-to-end baseline. Stage and
 end-to-end values remain environment-specific compatibility evidence, not parser
 limits or release thresholds.
 
+### Linux Worker-Containment Evidence
+
+`report_native_worker_containment` re-executes one project instrumentation binary as
+one child at a time. The child applies a 256 MiB `RLIMIT_AS` before reading input or
+entering OxJSONLD. The parent admits at most 1 MiB, accepts at most 4 KiB of stdout,
+discards stderr, and kills and reaps the child after a one-second wall-clock
+deadline.
+
+The revision-bound CI report verifies the 32,768-value production workload, the
+repository remote-context failure, denial of a controlled 512 MiB address-space
+reservation, kill/reap after a controlled delay, response overflow, and rejection
+of an oversized request before spawn. Worker replies contain a fixed outcome,
+source-match boolean, counters, and the configured address-space cap. They contain
+no source bytes, RDF values, ordered source tree, or backend diagnostic text.
+
+`RLIMIT_AS` bounds virtual address space, not RSS. The constants belong to the
+evidence harness; they are not parser options, package defaults, or release
+thresholds. D-029 remains open because no supported native host boundary, bounded
+host-wide worker pool, macOS/Windows mechanism, or browser/Node Worker exists.
+
 ## Reproduction
 
 The native commands require macOS `/usr/bin/time -l`; RSS output and process
@@ -383,6 +408,17 @@ revision:
 `fuzz/README.md` records the pinned coverage-guided parser commands and their
 test-process bounds.
 
+On a clean committed Linux checkout, reproduce the worker-containment report with:
+
+```bash
+REVISION="$(git rev-parse HEAD)"
+CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="$REVISION" \
+  cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
+    --no-default-features --features production-semantic-harness \
+    --example report_native_worker_containment
+target/release/examples/report_native_worker_containment
+```
+
 ## Gaps And Update Rules
 
 - Allocation counts are not measured. macOS `/usr/bin/time -l` reports process
@@ -391,8 +427,9 @@ test-process bounds.
 - The generated suite samples selected structural and graph growth patterns. It
   does not establish safe hard caps or cover every JSON-LD expansion shape.
 - Process RSS is measured for the full resource-stress suite, not per case.
-- OxJSONLD has no project-controlled hard timeout or allocation budget. Native
-  subprocesses and browser/Node Workers remain the termination boundary.
+- In-process OxJSONLD has no project-controlled hard timeout or allocation budget.
+  The Linux evidence harness tests an external deadline and address-space cap, but
+  supported native and browser/Node worker boundaries remain absent.
 - M1-C6 uses this evidence for private emitted-quad and retained-term policy. The
   limits do not bound backend allocation or diagnostic amplification.
 - Native production semantic time reports carry a V1 identity marker and are also

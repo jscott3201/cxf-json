@@ -69,9 +69,11 @@ not backend allocation, process memory, or execution time. Its public signatures
 contain no Serde, JSON-LD, RDF, filesystem, HTTP, Python, or JavaScript values.
 
 See [`spec/PROFILE.md`](spec/PROFILE.md) for the complete 0.1.3 contract. W-007
-now has a private lossless ordered source view on the development branch. RDF
-identity joins and the public parse boundary remain unimplemented. W-011 retains
-backend diagnostic and host resource budgets; W-013 owns concrete typed CXF and
+has a private lossless ordered source view. A Linux-only project instrumentation
+harness tests one worker process with bounded transfer, deadline, and address space;
+it is not a supported parser or cross-target containment boundary. RDF identity
+joins and the public parse boundary remain unimplemented. W-011 retains backend
+diagnostic and production host resource policy; W-013 owns concrete typed CXF and
 extension records.
 
 ## Build and test
