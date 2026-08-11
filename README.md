@@ -14,13 +14,15 @@ internal implementation stages rather than general-purpose public APIs.
 ## Status
 
 The source repository is public, but no `cxf-json` package has been published.
-Profile 0.1.0 defines the owned Rust contract foundations but makes no CXF parse,
-conformance, untrusted-input safety, or API-stability claim.
+Profile 0.1.1 defines the owned Rust contract foundations and a 1 MiB default
+input-byte admission limit. It makes no CXF parse, conformance, untrusted-input
+safety, or API-stability claim.
 
 The workspace contains two unpublished crates:
 
 - `cxf-json` defines source, document-IRI, byte-location, diagnostic, error, and
-  option types. It has no parse entry point.
+  option types. It can reject oversized input before source retention but has no
+  parse entry point.
 - `cxf-ingest-probe` remains the M0 evidence crate. It does not implement typed
   CXF projection, profile validation, or production resource limits. Do not use
   it to process untrusted input.
@@ -55,13 +57,14 @@ or a conformance suite.
 
 The `cxf-json` crate owns exact source bytes, validates an optional absolute
 document IRI, and defines zero-based byte positions, half-open ranges, structured
-diagnostic fields, a future parse-error envelope, and private parse options. Its
-public signatures contain no Serde, JSON-LD, RDF, filesystem, HTTP, Python, or
-JavaScript values.
+diagnostic fields, a future parse-error envelope, and private parse options. Input
+admission defaults to an inclusive 1 MiB byte limit and returns a source-free error
+before copying oversized input. Its public signatures contain no Serde, JSON-LD,
+RDF, filesystem, HTTP, Python, or JavaScript values.
 
-See [`spec/PROFILE.md`](spec/PROFILE.md) for the complete 0.1.0 contract. W-007
-owns the first semantic parse path; W-011 owns input limits; W-013 owns concrete
-typed CXF and extension records.
+See [`spec/PROFILE.md`](spec/PROFILE.md) for the complete 0.1.1 contract. W-007
+owns the first semantic parse path; W-011 still owns JSON-structure and processing
+limits; W-013 owns concrete typed CXF and extension records.
 
 ## Build and test
 
@@ -87,9 +90,9 @@ threshold.
 ## Specification
 
 [`spec/PROFILE.md`](spec/PROFILE.md) is the sole source of truth for observable
-behavior. Version 0.1.0 defines only the owned core contract and explicitly omits
-accepted CXF input, parse output, conformance, and resource limits. Architecture
-decisions and their compatibility impact are recorded in
+behavior. Version 0.1.1 defines the owned core contract and input-byte admission;
+it omits accepted CXF syntax, parse output, conformance, and downstream processing
+limits. Architecture decisions and their compatibility impact are recorded in
 [`spec/adr/`](spec/adr/).
 
 ## Contributing

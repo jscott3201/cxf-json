@@ -1,9 +1,11 @@
-use std::fmt;
+use std::{error::Error, fmt};
+
+use super::ParseOptions;
 
 /// Exact input bytes owned by the core contract.
 ///
-/// Construction does not validate JSON or CXF. A future parser will create this
-/// value only after W-011 input-size admission.
+/// Construction does not validate JSON or CXF. [`SourceDocument::admit_bytes`]
+/// applies the profile input-size limit before retaining a copy.
 #[derive(Clone, Eq, PartialEq)]
 pub struct SourceDocument {
     bytes: Vec<u8>,
@@ -14,6 +16,24 @@ impl SourceDocument {
     #[must_use]
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         Self { bytes }
+    }
+
+    /// Admits borrowed input under `options` and retains one exact owned copy.
+    ///
+    /// This checks only the byte length. UTF-8, JSON, JSON-LD, and CXF processing
+    /// occur after admission.
+    pub fn admit_bytes(input: &[u8], options: &ParseOptions) -> Result<Self, AdmissionError> {
+        let actual_bytes = input.len() as u64;
+        let max_input_bytes = options.max_input_bytes();
+
+        if actual_bytes > max_input_bytes {
+            return Err(AdmissionError {
+                actual_bytes,
+                max_input_bytes,
+            });
+        }
+
+        Ok(Self::from_bytes(input.to_vec()))
     }
 
     /// Returns the exact owned bytes.
@@ -43,6 +63,39 @@ impl fmt::Debug for SourceDocument {
             .finish_non_exhaustive()
     }
 }
+
+/// Input-size failure produced before source bytes are retained.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AdmissionError {
+    actual_bytes: u64,
+    max_input_bytes: u64,
+}
+
+impl AdmissionError {
+    /// Returns the submitted byte count.
+    #[must_use]
+    pub const fn actual_bytes(self) -> u64 {
+        self.actual_bytes
+    }
+
+    /// Returns the configured inclusive byte limit.
+    #[must_use]
+    pub const fn max_input_bytes(self) -> u64 {
+        self.max_input_bytes
+    }
+}
+
+impl fmt::Display for AdmissionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "input is {} bytes; maximum admitted size is {} bytes",
+            self.actual_bytes, self.max_input_bytes
+        )
+    }
+}
+
+impl Error for AdmissionError {}
 
 /// Zero-based byte position in a [`SourceDocument`].
 ///
