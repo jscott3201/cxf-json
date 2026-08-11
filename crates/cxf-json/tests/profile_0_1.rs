@@ -61,14 +61,30 @@ fn parse_options_default_to_no_document_iri() {
         ParseOptions::DEFAULT_MAX_INPUT_BYTES
     );
     assert_eq!(ParseOptions::DEFAULT_MAX_INPUT_BYTES, 1_048_576);
+    assert_eq!(ParseOptions::DEFAULT_MAX_JSON_NESTING_DEPTH, 64);
+    assert_eq!(ParseOptions::DEFAULT_MAX_JSON_OBJECT_MEMBERS, 4_096);
+    assert_eq!(ParseOptions::DEFAULT_MAX_JSON_VALUES, 65_536);
+    assert_eq!(ParseOptions::DEFAULT_MAX_DECODED_MEMBER_NAME_BYTES, 262_144);
+    assert_eq!(options.max_json_nesting_depth(), 64);
+    assert_eq!(options.max_json_object_members(), 4_096);
+    assert_eq!(options.max_json_values(), 65_536);
+    assert_eq!(options.max_decoded_member_name_bytes(), 262_144);
     assert_eq!(ParseOptions::default(), options);
 
     let iri = DocumentIri::parse("https://example.test/input").expect("IRI should parse");
     let options = options
         .with_document_iri(iri.clone())
-        .with_max_input_bytes(42);
+        .with_max_input_bytes(42)
+        .with_max_json_nesting_depth(1)
+        .with_max_json_object_members(2)
+        .with_max_json_values(3)
+        .with_max_decoded_member_name_bytes(4);
     assert_eq!(options.document_iri(), Some(&iri));
     assert_eq!(options.max_input_bytes(), 42);
+    assert_eq!(options.max_json_nesting_depth(), 1);
+    assert_eq!(options.max_json_object_members(), 2);
+    assert_eq!(options.max_json_values(), 3);
+    assert_eq!(options.max_decoded_member_name_bytes(), 4);
 }
 
 #[test]

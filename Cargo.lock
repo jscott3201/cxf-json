@@ -64,6 +64,7 @@ name = "cxf-json"
 version = "0.0.0"
 dependencies = [
  "oxiri",
+ "serde_json",
 ]
 
 [[package]]

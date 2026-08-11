@@ -7,6 +7,10 @@ use super::DocumentIri;
 pub struct ParseOptions {
     document_iri: Option<DocumentIri>,
     max_input_bytes: u64,
+    max_json_nesting_depth: u64,
+    max_json_object_members: u64,
+    max_json_values: u64,
+    max_decoded_member_name_bytes: u64,
 }
 
 impl Default for ParseOptions {
@@ -14,6 +18,10 @@ impl Default for ParseOptions {
         Self {
             document_iri: None,
             max_input_bytes: Self::DEFAULT_MAX_INPUT_BYTES,
+            max_json_nesting_depth: Self::DEFAULT_MAX_JSON_NESTING_DEPTH,
+            max_json_object_members: Self::DEFAULT_MAX_JSON_OBJECT_MEMBERS,
+            max_json_values: Self::DEFAULT_MAX_JSON_VALUES,
+            max_decoded_member_name_bytes: Self::DEFAULT_MAX_DECODED_MEMBER_NAME_BYTES,
         }
     }
 }
@@ -21,6 +29,14 @@ impl Default for ParseOptions {
 impl ParseOptions {
     /// Default maximum admitted input size in bytes.
     pub const DEFAULT_MAX_INPUT_BYTES: u64 = 1_048_576;
+    /// Default maximum simultaneous open JSON arrays and objects.
+    pub const DEFAULT_MAX_JSON_NESTING_DEPTH: u64 = 64;
+    /// Default maximum decoded member-name/value pairs in one JSON object.
+    pub const DEFAULT_MAX_JSON_OBJECT_MEMBERS: u64 = 4_096;
+    /// Default maximum JSON scalar and container values, including the root.
+    pub const DEFAULT_MAX_JSON_VALUES: u64 = 65_536;
+    /// Default maximum UTF-8 bytes across decoded JSON member names.
+    pub const DEFAULT_MAX_DECODED_MEMBER_NAME_BYTES: u64 = 262_144;
 
     /// Creates options with no document IRI.
     #[must_use]
@@ -52,5 +68,57 @@ impl ParseOptions {
     #[must_use]
     pub const fn max_input_bytes(&self) -> u64 {
         self.max_input_bytes
+    }
+
+    /// Returns options with the inclusive JSON nesting limit set to `max_depth`.
+    #[must_use]
+    pub fn with_max_json_nesting_depth(mut self, max_depth: u64) -> Self {
+        self.max_json_nesting_depth = max_depth;
+        self
+    }
+
+    /// Returns the inclusive JSON nesting limit.
+    #[must_use]
+    pub const fn max_json_nesting_depth(&self) -> u64 {
+        self.max_json_nesting_depth
+    }
+
+    /// Returns options with the inclusive per-object member limit set to `max_members`.
+    #[must_use]
+    pub fn with_max_json_object_members(mut self, max_members: u64) -> Self {
+        self.max_json_object_members = max_members;
+        self
+    }
+
+    /// Returns the inclusive per-object member limit.
+    #[must_use]
+    pub const fn max_json_object_members(&self) -> u64 {
+        self.max_json_object_members
+    }
+
+    /// Returns options with the inclusive total JSON value limit set to `max_values`.
+    #[must_use]
+    pub fn with_max_json_values(mut self, max_values: u64) -> Self {
+        self.max_json_values = max_values;
+        self
+    }
+
+    /// Returns the inclusive total JSON value limit.
+    #[must_use]
+    pub const fn max_json_values(&self) -> u64 {
+        self.max_json_values
+    }
+
+    /// Returns options with the decoded member-name byte limit set to `max_bytes`.
+    #[must_use]
+    pub fn with_max_decoded_member_name_bytes(mut self, max_bytes: u64) -> Self {
+        self.max_decoded_member_name_bytes = max_bytes;
+        self
+    }
+
+    /// Returns the inclusive decoded member-name byte limit.
+    #[must_use]
+    pub const fn max_decoded_member_name_bytes(&self) -> u64 {
+        self.max_decoded_member_name_bytes
     }
 }

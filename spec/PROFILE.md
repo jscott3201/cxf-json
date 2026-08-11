@@ -1,19 +1,20 @@
 # CXF project profile
 
-Profile version: 0.1.1
+Profile version: 0.1.2
 
-Status: Core contract with input-byte admission; no parser or conformance profile.
+Status: Core contract with input and JSON-structure options; no public parser or
+conformance profile.
 
-Compatibility impact: Additive input-byte admission. ADR 0005 records the
+Compatibility impact: Additive JSON-structure options. ADR 0006 records the
 machine-readable `Additive` classification.
 
 ## Scope
 
-Version 0.1.1 defines the owned Rust foundations and input-byte admission used by
-later CXF ingestion. It does not define accepted JSON or CXF syntax, a parse entry
-point, typed CXF values, extension records, validation rules, JSON-structure or
-processing limits, context loading, host serialization, or package-release
-stability.
+Version 0.1.2 defines the owned Rust foundations, input-byte admission, and
+structural JSON options used by later CXF ingestion. It does not define accepted
+public JSON or CXF syntax, a parse entry point, typed CXF values, extension records,
+validation rules, JSON-LD processing limits, context loading, host serialization,
+or package-release stability.
 
 The `cxf-json` package remains unpublished at package version 0.0.0. Its public
 contract is governed by this profile even before package publication.
@@ -26,7 +27,7 @@ The crate exports `SourceDocument`, `AdmissionError`, `DocumentIri`,
 `ParseOptions`.
 
 Public signatures MUST NOT expose Serde, OxIRI, OxJSONLD, OxRDF, filesystem, HTTP,
-Python, JavaScript, or other host-runtime values. Profile 0.1.1 defines no Serde
+Python, JavaScript, or other host-runtime values. Profile 0.1.2 defines no Serde
 serialization contract for public core types.
 
 ## Source bytes
@@ -59,6 +60,32 @@ therefore reveal only the two byte counts and fixed explanatory text.
 
 `SourceDocument::from_bytes` remains a raw ownership constructor and does not
 apply `ParseOptions`.
+
+## JSON-structure options
+
+The structural limits are inclusive unsigned 64-bit values. Every option accepts
+zero. Profile 0.1.2 defines the options for the future CXF parse path but no public
+function that applies them.
+
+`ParseOptions::DEFAULT_MAX_JSON_NESTING_DEPTH` MUST be 64. A root container has
+depth 1; a scalar root has depth 0. A zero limit therefore permits scalar roots but
+no array or object.
+
+`ParseOptions::DEFAULT_MAX_JSON_OBJECT_MEMBERS` MUST be 4,096. Members are counted
+independently in each object. A zero limit permits an empty object but rejects its
+first member.
+
+`ParseOptions::DEFAULT_MAX_JSON_VALUES` MUST be 65,536. Every scalar, array, and
+object, including the root, counts as one value. A zero limit rejects every JSON
+value.
+
+`ParseOptions::DEFAULT_MAX_DECODED_MEMBER_NAME_BYTES` MUST be 262,144. The count is
+the total UTF-8 byte length of decoded member names, counted once per occurrence.
+A zero limit permits empty member names but rejects any nonempty decoded name.
+
+`ParseOptions::new` and `ParseOptions::default` MUST use all four defaults. The
+corresponding `with_max_*` methods MUST replace one limit without changing the
+others, and each accessor MUST return the configured value.
 
 ## Document IRI
 
@@ -94,11 +121,11 @@ Diagnostic severity values are `Warning` and `Error`. Diagnostic stages are
 message, optional byte range, optional JSON Pointer, and optional RDF-term
 evidence. Range, pointer, and RDF-term evidence are independent; the presence of
 one does not imply either other value exists. Consumers MUST match a future
-diagnostic by code and structured fields, not by message text. Version 0.1.1
+diagnostic by code and structured fields, not by message text. Version 0.1.2
 defines no concrete diagnostic codes or emitting behavior.
 
 `ParseError` is an owned envelope for a future admitted source document and one
-diagnostic. Version 0.1.1 defines the type and accessors but no function that
+diagnostic. Version 0.1.2 defines the type and accessors but no function that
 constructs or returns it.
 
 ## Compatibility
