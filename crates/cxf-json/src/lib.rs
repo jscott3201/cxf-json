@@ -3,15 +3,29 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 //! Owned contract foundations for CXF JSON.
 //!
-//! This crate does not yet parse CXF. Profile 0.1.2 defines input-byte admission,
-//! structural JSON options, and source, location, diagnostic, and error types for
-//! later ingestion work without exposing JSON-LD, RDF, Serde, or host-runtime
-//! values.
+//! Normal builds do not expose a supported CXF parser. Profile 0.1.3 defines
+//! input-byte, structural JSON, and private RDF output options plus source,
+//! location, diagnostic, and error types without exposing JSON-LD, RDF, Serde, or
+//! host-runtime values. Explicit project instrumentation builds also expose a
+//! doc-hidden observation module.
 
 mod contract;
-// W-007 consumes this production seam; M1-C5 keeps it private until then.
+// These stages stay private until W-007 defines a supported parse boundary.
 #[allow(dead_code)]
 mod json;
+#[allow(dead_code)]
+mod ordered;
+#[cfg(feature = "semantic-ingestion")]
+#[allow(dead_code)]
+mod semantic;
+#[cfg(all(
+    feature = "semantic-ingestion",
+    any(test, fuzzing, cxf_json_semantic_harness)
+))]
+// This unsupported surface exists only for explicit project instrumentation builds.
+#[doc(hidden)]
+#[allow(missing_docs)]
+pub mod test_support;
 
 pub use contract::{
     AdmissionError, Diagnostic, DiagnosticCode, DiagnosticSeverity, DiagnosticStage, DocumentIri,

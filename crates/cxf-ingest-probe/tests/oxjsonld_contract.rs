@@ -2,9 +2,10 @@
 
 use cxf_ingest_probe::{DiagnosticStage, RdfNodeKind, RdfObjectSummary, parse_json_ld};
 
-const EMBEDDED_CONTEXT: &[u8] = include_bytes!("fixtures/embedded-context.jsonld");
-const NAMED_GRAPH: &[u8] = include_bytes!("fixtures/named-graph.jsonld");
-const REMOTE_CONTEXT: &[u8] = include_bytes!("fixtures/remote-context.jsonld");
+const EMBEDDED_CONTEXT: &[u8] =
+    include_bytes!("../../cxf-json/tests/fixtures/embedded-context.jsonld");
+const NAMED_GRAPH: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/named-graph.jsonld");
+const REMOTE_CONTEXT: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/remote-context.jsonld");
 
 #[test]
 fn repeated_parse_reports_match_within_process() {

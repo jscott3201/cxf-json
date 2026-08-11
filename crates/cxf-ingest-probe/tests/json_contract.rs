@@ -4,7 +4,7 @@ use cxf_ingest_probe::{
     parse_json,
 };
 
-const NUMBERS: &[u8] = include_bytes!("fixtures/numbers.json");
+const NUMBERS: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/numbers.json");
 
 #[test]
 fn retains_exact_input_bytes() {

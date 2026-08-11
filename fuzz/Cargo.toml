@@ -11,11 +11,19 @@ cargo-fuzz = true
 
 [dependencies]
 cxf-ingest-probe = { path = "../crates/cxf-ingest-probe", version = "=0.0.0", default-features = false }
+cxf-json = { path = "../crates/cxf-json", version = "=0.0.0", default-features = false, features = ["semantic-ingestion"] }
 libfuzzer-sys = "0.4.13"
 
 [[bin]]
 name = "json_preflight"
 path = "fuzz_targets/json_preflight.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "semantic_ingest"
+path = "fuzz_targets/semantic_ingest.rs"
 test = false
 doc = false
 bench = false

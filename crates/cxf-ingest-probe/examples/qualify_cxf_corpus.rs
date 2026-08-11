@@ -702,7 +702,7 @@ mod tests {
     use cxf_ingest_probe::{DiagnosticStage, SourcePosition, SourceRange};
 
     fn fixtures() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../cxf-json/tests/fixtures")
     }
 
     fn git_mode_supported() -> bool {
@@ -856,13 +856,10 @@ mod tests {
             .and_then(Path::parent)
             .expect("crate should be inside the workspace");
         let commit = git_output(repository, ["rev-parse", "HEAD"]).expect("HEAD should resolve");
-        let path = fixtures().join("embedded-context.jsonld");
+        let path = repository.join("LICENSE-MIT");
         let bytes = read_git_blob(repository, commit.trim(), &path).expect("blob should read");
 
-        assert_eq!(
-            bytes,
-            include_bytes!("../tests/fixtures/embedded-context.jsonld")
-        );
+        assert_eq!(bytes, include_bytes!("../../../LICENSE-MIT"));
     }
 
     #[test]

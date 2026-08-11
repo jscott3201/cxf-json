@@ -68,8 +68,8 @@ if (reportMetrics) {
       `instrumentation revision mismatch: expected ${instrumentationRevision}, got ${head}`,
     );
   }
-  if (git("status", "--porcelain=v1", "--untracked-files=no") !== "") {
-    throw new Error("WASM measurements require a clean tracked worktree");
+  if (git("status", "--porcelain=v1", "--untracked-files=normal") !== "") {
+    throw new Error("WASM measurements require a clean worktree");
   }
 }
 

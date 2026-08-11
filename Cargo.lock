@@ -51,6 +51,7 @@ dependencies = [
 name = "cxf-ingest-probe"
 version = "0.0.0"
 dependencies = [
+ "cxf-json",
  "getrandom",
  "oxjsonld",
  "oxrdf",
@@ -63,7 +64,10 @@ dependencies = [
 name = "cxf-json"
 version = "0.0.0"
 dependencies = [
+ "getrandom",
  "oxiri",
+ "oxjsonld",
+ "oxrdf",
  "serde_json",
 ]
 

@@ -1,11 +1,21 @@
 use std::{env, path::Path, process::Command};
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(cxf_json_semantic_harness)");
+    println!("cargo:rerun-if-env-changed=CXF_JSON_SEMANTIC_HARNESS");
     println!("cargo:rerun-if-env-changed=CXF_BENCHMARK_REVISION");
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=examples");
     println!("cargo:rerun-if-changed=tests");
     println!("cargo:rerun-if-changed=Cargo.toml");
+
+    match env::var("CXF_JSON_SEMANTIC_HARNESS") {
+        Err(env::VarError::NotPresent) => {}
+        Ok(value) if value == "1" => println!("cargo::rustc-cfg=cxf_json_semantic_harness"),
+        Ok(_) | Err(env::VarError::NotUnicode(_)) => {
+            panic!("CXF_JSON_SEMANTIC_HARNESS must be unset or equal to 1")
+        }
+    }
 
     let Ok(revision) = env::var("CXF_BENCHMARK_REVISION") else {
         return;
@@ -26,11 +36,11 @@ fn main() {
     );
     let status = git_output(
         repository,
-        &["status", "--porcelain=v1", "--untracked-files=no"],
+        &["status", "--porcelain=v1", "--untracked-files=normal"],
     );
     assert!(
         status.is_empty(),
-        "benchmark artifacts require a clean tracked worktree"
+        "benchmark artifacts require a clean worktree"
     );
     println!("cargo:rustc-env=CXF_VERIFIED_BENCHMARK_REVISION={revision}");
 }

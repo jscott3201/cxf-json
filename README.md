@@ -14,15 +14,17 @@ internal implementation stages rather than general-purpose public APIs.
 ## Status
 
 The source repository is public, but no `cxf-json` package has been published.
-Profile 0.1.2 defines the owned Rust contract foundations, a 1 MiB default
-input-byte admission limit, and configurable JSON-structure limits. It makes no CXF
-parse, conformance, untrusted-input safety, or API-stability claim.
+Profile 0.1.3 defines the owned Rust contract foundations, a 1 MiB default
+input-byte admission limit, configurable JSON-structure limits, and private RDF
+output-retention limits. It makes no public CXF parse, conformance, untrusted-input
+safety, or API-stability claim. Explicit project instrumentation builds expose a
+doc-hidden observation shim; normal builds have no supported parse entry point.
 
 The workspace contains two unpublished crates:
 
 - `cxf-json` defines source, document-IRI, byte-location, diagnostic, error, and
-  option types. It has a private bounded JSON preflight for the future CXF path but
-  no parse entry point.
+  option types. Its default feature adds private JSON-LD processing with bounded
+  RDF output retention, but normal builds expose no supported parse entry point.
 - `cxf-ingest-probe` remains the M0 evidence crate. It does not implement typed
   CXF projection, profile validation, or production resource limits. Do not use
   it to process untrusted input.
@@ -61,12 +63,16 @@ diagnostic fields, a future parse-error envelope, and private parse options. Inp
 admission defaults to an inclusive 1 MiB byte limit and returns a source-free error
 before copying oversized input. Parse options also define depth, object-member,
 total-value, and decoded member-name byte limits for the private production
-preflight. Its public signatures contain no Serde, JSON-LD, RDF, filesystem, HTTP,
-Python, or JavaScript values.
+preflight. Profile 0.1.3 also defines inclusive defaults of 65,536 emitted RDF
+quads and 8 MiB of retained RDF term strings. These limits bound project output,
+not backend allocation, process memory, or execution time. Its public signatures
+contain no Serde, JSON-LD, RDF, filesystem, HTTP, Python, or JavaScript values.
 
-See [`spec/PROFILE.md`](spec/PROFILE.md) for the complete 0.1.2 contract. W-007
-owns the first semantic parse path; W-011 still owns diagnostic and JSON-LD
-processing budgets; W-013 owns concrete typed CXF and extension records.
+See [`spec/PROFILE.md`](spec/PROFILE.md) for the complete 0.1.3 contract. W-007
+now has a private lossless ordered source view on the development branch. RDF
+identity joins and the public parse boundary remain unimplemented. W-011 retains
+backend diagnostic and host resource budgets; W-013 owns concrete typed CXF and
+extension records.
 
 ## Build and test
 
@@ -92,10 +98,11 @@ threshold.
 ## Specification
 
 [`spec/PROFILE.md`](spec/PROFILE.md) is the sole source of truth for observable
-behavior. Version 0.1.2 defines the owned core contract, input-byte admission, and
-JSON-structure options; it omits accepted CXF syntax, parse output, conformance,
-and downstream JSON-LD processing limits. Architecture decisions and their
-compatibility impact are recorded in
+behavior. Version 0.1.2 defined the owned core contract, input-byte admission, and
+JSON-structure options. Version 0.1.3 adds private RDF output-retention options and
+the guarded semantic-ingestion feature; it omits accepted public CXF syntax, parse
+output, and conformance. Architecture decisions and their compatibility impact are
+recorded in
 [`spec/adr/`](spec/adr/).
 
 ## Contributing

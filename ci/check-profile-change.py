@@ -114,9 +114,21 @@ package = next((package for package in metadata["packages"] if package["name"] =
 if package is None or package["publish"] != []:
     fail("the cxf-json package must exist and remain unpublished")
 assert package is not None
-dependencies = {dependency["name"] for dependency in package["dependencies"]}
-if dependencies != {"oxiri", "serde_json"}:
+dependencies = {dependency["name"]: dependency for dependency in package["dependencies"]}
+if set(dependencies) != {"getrandom", "oxiri", "oxjsonld", "oxrdf", "serde_json"}:
     fail("the cxf-json package must retain its approved private dependency boundary")
+if dependencies["oxiri"]["optional"] or dependencies["serde_json"]["optional"]:
+    fail("the source and JSON dependencies must remain unconditional")
+if not dependencies["oxjsonld"]["optional"] or not dependencies["oxrdf"]["optional"]:
+    fail("semantic dependencies must remain optional")
+getrandom = dependencies["getrandom"]
+if (
+    not getrandom["optional"]
+    or getrandom["target"] != "wasm32-unknown-unknown"
+    or getrandom["req"] != "=0.3.4"
+    or getrandom["features"] != ["wasm_js"]
+):
+    fail("getrandom must retain the approved target-only D-021 shape")
 
 
 base = os.environ.get("PROFILE_BASE_SHA")

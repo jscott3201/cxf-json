@@ -1,6 +1,9 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt, ops::Range, sync::Arc};
 
-use crate::{AdmissionError, ParseOptions, SourceDocument, SourcePosition, SourceRange};
+use crate::{
+    AdmissionError, ParseOptions, SourceDocument, SourcePosition, SourceRange,
+    ordered::{OrderedDocument, OrderedMember, OrderedValue},
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct JsonStructureMetrics {
@@ -72,10 +75,20 @@ pub(crate) enum PreflightFailure {
     Json(JsonPreflightError),
 }
 
-#[derive(Debug)]
 pub(crate) struct PreflightedJson {
     source: SourceDocument,
     metrics: JsonStructureMetrics,
+    root: OrderedValue,
+}
+
+impl fmt::Debug for PreflightedJson {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreflightedJson")
+            .field("source", &self.source)
+            .field("metrics", &self.metrics)
+            .finish_non_exhaustive()
+    }
 }
 
 impl PreflightedJson {
@@ -87,8 +100,8 @@ impl PreflightedJson {
         self.metrics
     }
 
-    pub(crate) fn into_source_document(self) -> SourceDocument {
-        self.source
+    pub(crate) fn into_ordered_document(self) -> (OrderedDocument, JsonStructureMetrics) {
+        (OrderedDocument::new(self.source, self.root), self.metrics)
     }
 }
 
@@ -114,7 +127,11 @@ fn preflight_admitted(
     }
 
     match scan_json(source.as_bytes(), options) {
-        Ok(metrics) => Ok(PreflightedJson { source, metrics }),
+        Ok(ScannedJson { metrics, root }) => Ok(PreflightedJson {
+            source,
+            metrics,
+            root,
+        }),
         Err(error) => Err(json_failure(source, error.kind, error.offset)),
     }
 }
@@ -166,11 +183,18 @@ enum ObjectState {
 }
 
 enum Frame {
-    Array(ArrayState),
+    Array {
+        state: ArrayState,
+        start: usize,
+        values: Vec<OrderedValue>,
+    },
     Object {
         state: ObjectState,
-        names: HashSet<String>,
+        start: usize,
+        names: HashSet<Arc<str>>,
         member_count: u64,
+        members: Vec<OrderedMember>,
+        pending_name: Option<(Arc<str>, Range<usize>)>,
     },
 }
 
@@ -179,36 +203,58 @@ struct ScanError {
     offset: usize,
 }
 
-fn scan_json(input: &[u8], options: &ParseOptions) -> Result<JsonStructureMetrics, ScanError> {
+struct ScannedJson {
+    metrics: JsonStructureMetrics,
+    root: OrderedValue,
+}
+
+fn scan_json(input: &[u8], options: &ParseOptions) -> Result<ScannedJson, ScanError> {
     let mut offset = 0;
-    let mut root_complete = false;
+    let mut root = None;
     let mut stack = Vec::new();
     let mut metrics = JsonStructureMetrics::default();
 
     loop {
         skip_whitespace(input, &mut offset);
         let Some(frame) = stack.last_mut() else {
-            if root_complete {
+            if let Some(root) = root {
                 return if offset == input.len() {
-                    Ok(metrics)
+                    Ok(ScannedJson { metrics, root })
                 } else {
                     Err(scan_error(JsonFailureKind::Syntax, offset))
                 };
             }
-            parse_value(input, &mut offset, &mut stack, &mut metrics, options)?;
-            root_complete = true;
+            if let Some(value) = parse_value(input, &mut offset, &mut stack, &mut metrics, options)?
+            {
+                append_completed(value, &mut stack, &mut root, offset)?;
+            }
             continue;
         };
 
         match frame {
-            Frame::Array(state) => match state {
+            Frame::Array { state, .. } => match state {
                 ArrayState::FirstValueOrEnd if input.get(offset) == Some(&b']') => {
                     offset += 1;
-                    stack.pop();
+                    let Some(Frame::Array { start, values, .. }) = stack.pop() else {
+                        return Err(scan_error(JsonFailureKind::Syntax, offset));
+                    };
+                    append_completed(
+                        OrderedValue::Array {
+                            values,
+                            token: start..offset,
+                        },
+                        &mut stack,
+                        &mut root,
+                        offset,
+                    )?;
                 }
                 ArrayState::FirstValueOrEnd | ArrayState::Value => {
                     *state = ArrayState::CommaOrEnd;
-                    parse_value(input, &mut offset, &mut stack, &mut metrics, options)?;
+                    if let Some(value) =
+                        parse_value(input, &mut offset, &mut stack, &mut metrics, options)?
+                    {
+                        append_completed(value, &mut stack, &mut root, offset)?;
+                    }
                 }
                 ArrayState::CommaOrEnd => match input.get(offset) {
                     Some(b',') => {
@@ -217,7 +263,18 @@ fn scan_json(input: &[u8], options: &ParseOptions) -> Result<JsonStructureMetric
                     }
                     Some(b']') => {
                         offset += 1;
-                        stack.pop();
+                        let Some(Frame::Array { start, values, .. }) = stack.pop() else {
+                            return Err(scan_error(JsonFailureKind::Syntax, offset));
+                        };
+                        append_completed(
+                            OrderedValue::Array {
+                                values,
+                                token: start..offset,
+                            },
+                            &mut stack,
+                            &mut root,
+                            offset,
+                        )?;
                     }
                     _ => return Err(scan_error(JsonFailureKind::Syntax, offset)),
                 },
@@ -226,10 +283,23 @@ fn scan_json(input: &[u8], options: &ParseOptions) -> Result<JsonStructureMetric
                 state,
                 names,
                 member_count,
+                pending_name,
+                ..
             } => match state {
                 ObjectState::FirstKeyOrEnd if input.get(offset) == Some(&b'}') => {
                     offset += 1;
-                    stack.pop();
+                    let Some(Frame::Object { start, members, .. }) = stack.pop() else {
+                        return Err(scan_error(JsonFailureKind::Syntax, offset));
+                    };
+                    append_completed(
+                        OrderedValue::Object {
+                            members,
+                            token: start..offset,
+                        },
+                        &mut stack,
+                        &mut root,
+                        offset,
+                    )?;
                 }
                 ObjectState::FirstKeyOrEnd | ObjectState::Key => {
                     let key_offset = offset;
@@ -242,7 +312,7 @@ fn scan_json(input: &[u8], options: &ParseOptions) -> Result<JsonStructureMetric
                         JsonFailureKind::ObjectMemberLimit,
                         key_offset,
                     )?;
-                    let name = parse_member_name(input, &mut offset)?;
+                    let (name, name_token) = parse_string(input, &mut offset)?;
                     let name_bytes = name.len() as u64;
                     let decoded_member_name_bytes = metrics
                         .decoded_member_name_bytes
@@ -256,12 +326,13 @@ fn scan_json(input: &[u8], options: &ParseOptions) -> Result<JsonStructureMetric
                             key_offset,
                         ));
                     }
-                    if !names.insert(name) {
+                    if !names.insert(Arc::clone(&name)) {
                         return Err(scan_error(JsonFailureKind::DuplicateMember, key_offset));
                     }
                     *member_count = next_member_count;
                     metrics.max_object_members = metrics.max_object_members.max(next_member_count);
                     metrics.decoded_member_name_bytes = decoded_member_name_bytes;
+                    *pending_name = Some((name, name_token));
                     *state = ObjectState::Colon;
                 }
                 ObjectState::Colon => {
@@ -273,7 +344,11 @@ fn scan_json(input: &[u8], options: &ParseOptions) -> Result<JsonStructureMetric
                 }
                 ObjectState::Value => {
                     *state = ObjectState::CommaOrEnd;
-                    parse_value(input, &mut offset, &mut stack, &mut metrics, options)?;
+                    if let Some(value) =
+                        parse_value(input, &mut offset, &mut stack, &mut metrics, options)?
+                    {
+                        append_completed(value, &mut stack, &mut root, offset)?;
+                    }
                 }
                 ObjectState::CommaOrEnd => match input.get(offset) {
                     Some(b',') => {
@@ -282,7 +357,18 @@ fn scan_json(input: &[u8], options: &ParseOptions) -> Result<JsonStructureMetric
                     }
                     Some(b'}') => {
                         offset += 1;
-                        stack.pop();
+                        let Some(Frame::Object { start, members, .. }) = stack.pop() else {
+                            return Err(scan_error(JsonFailureKind::Syntax, offset));
+                        };
+                        append_completed(
+                            OrderedValue::Object {
+                                members,
+                                token: start..offset,
+                            },
+                            &mut stack,
+                            &mut root,
+                            offset,
+                        )?;
                     }
                     _ => return Err(scan_error(JsonFailureKind::Syntax, offset)),
                 },
@@ -297,7 +383,7 @@ fn parse_value(
     stack: &mut Vec<Frame>,
     metrics: &mut JsonStructureMetrics,
     options: &ParseOptions,
-) -> Result<(), ScanError> {
+) -> Result<Option<OrderedValue>, ScanError> {
     skip_whitespace(input, offset);
     let value_offset = *offset;
     let Some(value_start) = input.get(value_offset) else {
@@ -323,26 +409,86 @@ fn parse_value(
             *offset += 1;
             stack.push(Frame::Object {
                 state: ObjectState::FirstKeyOrEnd,
+                start: value_offset,
                 names: HashSet::new(),
                 member_count: 0,
+                members: Vec::new(),
+                pending_name: None,
             });
             metrics.max_nesting_depth = metrics.max_nesting_depth.max(depth);
-            Ok(())
+            Ok(None)
         }
         b'[' => {
             let depth = checked_depth(stack, options, value_offset)?;
             *offset += 1;
-            stack.push(Frame::Array(ArrayState::FirstValueOrEnd));
+            stack.push(Frame::Array {
+                state: ArrayState::FirstValueOrEnd,
+                start: value_offset,
+                values: Vec::new(),
+            });
             metrics.max_nesting_depth = metrics.max_nesting_depth.max(depth);
-            Ok(())
+            Ok(None)
         }
-        b'"' => scan_string_token(input, offset).map(drop),
-        b't' => parse_keyword(input, offset, b"true"),
-        b'f' => parse_keyword(input, offset, b"false"),
-        b'n' => parse_keyword(input, offset, b"null"),
-        b'-' | b'0'..=b'9' => parse_number(input, offset),
+        b'"' => {
+            let (value, token) = parse_string(input, offset)?;
+            Ok(Some(OrderedValue::String { value, token }))
+        }
+        b't' => {
+            parse_keyword(input, offset, b"true")?;
+            Ok(Some(OrderedValue::Boolean {
+                value: true,
+                token: value_offset..*offset,
+            }))
+        }
+        b'f' => {
+            parse_keyword(input, offset, b"false")?;
+            Ok(Some(OrderedValue::Boolean {
+                value: false,
+                token: value_offset..*offset,
+            }))
+        }
+        b'n' => {
+            parse_keyword(input, offset, b"null")?;
+            Ok(Some(OrderedValue::Null {
+                token: value_offset..*offset,
+            }))
+        }
+        b'-' | b'0'..=b'9' => {
+            parse_number(input, offset)?;
+            Ok(Some(OrderedValue::Number {
+                token: value_offset..*offset,
+            }))
+        }
         _ => unreachable!("value start was checked above"),
     }
+}
+
+fn append_completed(
+    value: OrderedValue,
+    stack: &mut [Frame],
+    root: &mut Option<OrderedValue>,
+    offset: usize,
+) -> Result<(), ScanError> {
+    match stack.last_mut() {
+        Some(Frame::Array { values, .. }) => values.push(value),
+        Some(Frame::Object {
+            members,
+            pending_name,
+            ..
+        }) => {
+            let Some((name, name_token)) = pending_name.take() else {
+                return Err(scan_error(JsonFailureKind::Syntax, offset));
+            };
+            members.push(OrderedMember {
+                name,
+                name_token,
+                value,
+            });
+        }
+        None if root.is_none() => *root = Some(value),
+        None => return Err(scan_error(JsonFailureKind::Syntax, offset)),
+    }
+    Ok(())
 }
 
 fn checked_depth(stack: &[Frame], options: &ParseOptions, offset: usize) -> Result<u64, ScanError> {
@@ -370,12 +516,13 @@ fn checked_increment(
     Ok(next)
 }
 
-fn parse_member_name(input: &[u8], offset: &mut usize) -> Result<String, ScanError> {
+fn parse_string(input: &[u8], offset: &mut usize) -> Result<(Arc<str>, Range<usize>), ScanError> {
     let (start, end) = scan_string_token(input, offset)?;
-    serde_json::from_slice(&input[start..end]).map_err(|error| {
+    let value = serde_json::from_slice::<String>(&input[start..end]).map_err(|error| {
         let relative = error.column().saturating_sub(1);
         scan_error(JsonFailureKind::Syntax, start + relative)
-    })
+    })?;
+    Ok((value.into(), start..end))
 }
 
 fn scan_string_token(input: &[u8], offset: &mut usize) -> Result<(usize, usize), ScanError> {
@@ -631,6 +778,61 @@ mod tests {
     }
 
     #[test]
+    fn builds_one_lossless_ordered_view_during_preflight() {
+        let input = br#"
+            {"z":"\u0061","numbers":[1,1.0,1e+02,-0,1e400],"flags":[true,false,null]}
+        "#;
+        let result = admit_and_preflight(input, &ParseOptions::new())
+            .expect("ordered input should pass preflight");
+        let OrderedValue::Object { members, token } = &result.root else {
+            panic!("root should be an object")
+        };
+
+        assert_eq!(
+            &input[token.clone()],
+            br#"{"z":"\u0061","numbers":[1,1.0,1e+02,-0,1e400],"flags":[true,false,null]}"#
+        );
+        assert_eq!(
+            members
+                .iter()
+                .map(|member| member.name.as_ref())
+                .collect::<Vec<_>>(),
+            ["z", "numbers", "flags"]
+        );
+        assert_eq!(&input[members[0].name_token.clone()], br#""z""#);
+        let OrderedValue::String { value, token } = &members[0].value else {
+            panic!("z should be a string")
+        };
+        assert_eq!(value.as_ref(), "a");
+        assert_eq!(&input[token.clone()], br#""\u0061""#);
+
+        let OrderedValue::Array { values, .. } = &members[1].value else {
+            panic!("numbers should be an array")
+        };
+        assert_eq!(
+            values
+                .iter()
+                .map(|value| &input[value.token().clone()])
+                .collect::<Vec<_>>(),
+            [b"1".as_slice(), b"1.0", b"1e+02", b"-0", b"1e400"]
+        );
+
+        let OrderedValue::Array { values, .. } = &members[2].value else {
+            panic!("flags should be an array")
+        };
+        assert!(matches!(
+            values[0],
+            OrderedValue::Boolean { value: true, .. }
+        ));
+        assert!(matches!(
+            values[1],
+            OrderedValue::Boolean { value: false, .. }
+        ));
+        assert!(matches!(values[2], OrderedValue::Null { .. }));
+        assert_eq!(result.source_document().as_bytes(), input);
+    }
+
+    #[test]
     fn replays_reviewed_parser_seeds_directly() {
         for (name, input, expected_failure) in REVIEWED_SEEDS {
             match (
@@ -774,6 +976,19 @@ mod tests {
             json_error(&object_with_name_bytes(262_145), &options).kind(),
             JsonFailureKind::DecodedMemberNameBytesLimit
         );
+    }
+
+    #[test]
+    fn raised_depth_limit_drops_the_ordered_tree_iteratively() {
+        const DEPTH: usize = 50_000;
+        let input = nested_array(DEPTH);
+        let options = ParseOptions::new()
+            .with_max_json_nesting_depth(DEPTH as u64)
+            .with_max_json_values((DEPTH + 1) as u64);
+
+        let result = admit_and_preflight(&input, &options)
+            .expect("raised limits should admit the deeply nested array");
+        drop(result);
     }
 
     #[test]

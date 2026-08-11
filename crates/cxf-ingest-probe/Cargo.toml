@@ -9,8 +9,10 @@ publish = false
 [features]
 default = ["oxigraph"]
 oxigraph = ["dep:getrandom", "dep:oxjsonld", "dep:oxrdf"]
+production-semantic-harness = ["dep:cxf-json"]
 
 [dependencies]
+cxf-json = { path = "../cxf-json", version = "=0.0.0", optional = true, default-features = false, features = ["semantic-ingestion"] }
 oxjsonld = { workspace = true, optional = true }
 oxrdf = { workspace = true, optional = true }
 serde.workspace = true
@@ -30,6 +32,14 @@ required-features = ["oxigraph"]
 [[example]]
 name = "wasm_cxf_smoke"
 required-features = ["oxigraph"]
+
+[[example]]
+name = "wasm_production_semantic"
+required-features = ["production-semantic-harness"]
+
+[[example]]
+name = "report_production_semantic"
+required-features = ["production-semantic-harness"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 sha2 = "0.11.0"

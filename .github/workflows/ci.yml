@@ -40,9 +40,9 @@ jobs:
           CXF_BENCHMARK_REVISION="${GITHUB_SHA}" \
             cargo +1.97.1 build --release --example qualify_cxf_corpus --locked
           target/release/examples/qualify_cxf_corpus \
-            --expect-failure crates/cxf-ingest-probe/tests/fixtures/remote-context.jsonld \
+            --expect-failure crates/cxf-json/tests/fixtures/remote-context.jsonld \
             "No LoadDocumentCallback has been set to load remote contexts" \
-            crates/cxf-ingest-probe/tests/fixtures > "${report}"
+            crates/cxf-json/tests/fixtures > "${report}"
           python3 -c 'import json, sys; report = json.load(open(sys.argv[1])); raise SystemExit(not report["structural_metrics_complete"])' "${report}"
       - name: Check resource-stress suite
         run: |
@@ -51,6 +51,15 @@ jobs:
             cargo +1.97.1 run --release --locked -p cxf-ingest-probe \
               --example report_resource_stress > "${report}"
           python3 -c 'import json, sys; report = json.load(open(sys.argv[1])); raise SystemExit(report["case_count"] != 16 or report["unexpected_outcomes"] != 0)' "${report}"
+      - name: Check private production semantic path
+        run: |
+          report="${RUNNER_TEMP}/production-semantic.json"
+          CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="${GITHUB_SHA}" \
+            cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
+              --no-default-features --features production-semantic-harness \
+              --example report_production_semantic
+          target/release/examples/report_production_semantic > "${report}"
+          python3 -c 'import json, sys; report = json.load(open(sys.argv[1])); raise SystemExit(report["outcome"] != "success" or not report["source_matches_input"] or report["returned_rdf_quads"] != 32768)' "${report}"
 
   wasm:
     runs-on: ubuntu-latest
@@ -62,6 +71,8 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal --target wasm32-unknown-unknown
       - name: Build WASM target with Oxigraph
         run: cargo +1.97.1 build --workspace --all-features --locked --target wasm32-unknown-unknown
+      - name: Build cxf-json WASM target without workspace feature unification
+        run: cargo +1.97.1 build -p cxf-json --locked --target wasm32-unknown-unknown
       - name: Build Serde-only WASM target
         run: cargo +1.97.1 build --workspace --no-default-features --locked --target wasm32-unknown-unknown
       - name: Run CXF ingestion smoke test in Node
@@ -75,6 +86,18 @@ jobs:
               --metrics > "${RUNNER_TEMP}/wasm-${run}.json"
           done
           python3 ci/summarize-benchmarks.py wasm "${RUNNER_TEMP}"/wasm-{1,2,3,4,5}.json
+      - name: Run private production semantic smoke test in Node
+        run: |
+          CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="${GITHUB_SHA}" \
+            cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
+              --no-default-features --features production-semantic-harness \
+              --example wasm_production_semantic --target wasm32-unknown-unknown
+          for run in 1 2 3 4 5; do
+            CXF_BENCHMARK_REVISION="${GITHUB_SHA}" node ci/run-wasm-smoke.mjs \
+              target/wasm32-unknown-unknown/release/examples/wasm_production_semantic.wasm \
+              --metrics > "${RUNNER_TEMP}/production-wasm-${run}.json"
+          done
+          python3 ci/summarize-benchmarks.py wasm "${RUNNER_TEMP}"/production-wasm-{1,2,3,4,5}.json
       - name: Enforce WASM dependency allowlists
         run: |
           all_features="${RUNNER_TEMP}/wasm-all-features.txt"
@@ -107,12 +130,19 @@ jobs:
           cargo check --manifest-path fuzz/Cargo.toml --locked
           cargo deny --manifest-path fuzz/Cargo.toml --locked check --config fuzz/deny.toml
           cargo fuzz check --fuzz-dir fuzz json_preflight
+          cargo fuzz check --fuzz-dir fuzz semantic_ingest
       - name: Run bounded parser campaign
         run: |
           mkdir -p "${RUNNER_TEMP}/parser-corpus"
           cargo fuzz run --fuzz-dir fuzz json_preflight \
             "${RUNNER_TEMP}/parser-corpus" crates/cxf-ingest-probe/tests/parser-seeds -- \
             -runs=100000 -max_len=65536 -timeout=10 \
+            -rss_limit_mb=2048 -malloc_limit_mb=512
+          mkdir -p "${RUNNER_TEMP}/semantic-corpus"
+          cargo fuzz run --fuzz-dir fuzz semantic_ingest \
+            "${RUNNER_TEMP}/semantic-corpus" crates/cxf-ingest-probe/tests/parser-seeds \
+            crates/cxf-json/tests/fixtures -- \
+            -runs=10000 -max_len=65536 -timeout=10 \
             -rss_limit_mb=2048 -malloc_limit_mb=512
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()

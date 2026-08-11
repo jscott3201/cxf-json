@@ -11,6 +11,8 @@ pub struct ParseOptions {
     max_json_object_members: u64,
     max_json_values: u64,
     max_decoded_member_name_bytes: u64,
+    max_rdf_quads: u64,
+    max_retained_rdf_term_bytes: u64,
 }
 
 impl Default for ParseOptions {
@@ -22,6 +24,8 @@ impl Default for ParseOptions {
             max_json_object_members: Self::DEFAULT_MAX_JSON_OBJECT_MEMBERS,
             max_json_values: Self::DEFAULT_MAX_JSON_VALUES,
             max_decoded_member_name_bytes: Self::DEFAULT_MAX_DECODED_MEMBER_NAME_BYTES,
+            max_rdf_quads: Self::DEFAULT_MAX_RDF_QUADS,
+            max_retained_rdf_term_bytes: Self::DEFAULT_MAX_RETAINED_RDF_TERM_BYTES,
         }
     }
 }
@@ -37,6 +41,10 @@ impl ParseOptions {
     pub const DEFAULT_MAX_JSON_VALUES: u64 = 65_536;
     /// Default maximum UTF-8 bytes across decoded JSON member names.
     pub const DEFAULT_MAX_DECODED_MEMBER_NAME_BYTES: u64 = 262_144;
+    /// Default maximum RDF quads emitted before graph deduplication.
+    pub const DEFAULT_MAX_RDF_QUADS: u64 = 65_536;
+    /// Default maximum UTF-8 bytes retained across emitted RDF term occurrences.
+    pub const DEFAULT_MAX_RETAINED_RDF_TERM_BYTES: u64 = 8_388_608;
 
     /// Creates options with no document IRI.
     #[must_use]
@@ -120,5 +128,31 @@ impl ParseOptions {
     #[must_use]
     pub const fn max_decoded_member_name_bytes(&self) -> u64 {
         self.max_decoded_member_name_bytes
+    }
+
+    /// Returns options with the inclusive emitted RDF quad limit set to `max_quads`.
+    #[must_use]
+    pub fn with_max_rdf_quads(mut self, max_quads: u64) -> Self {
+        self.max_rdf_quads = max_quads;
+        self
+    }
+
+    /// Returns the inclusive emitted RDF quad limit.
+    #[must_use]
+    pub const fn max_rdf_quads(&self) -> u64 {
+        self.max_rdf_quads
+    }
+
+    /// Returns options with the inclusive retained RDF term-byte limit set to `max_bytes`.
+    #[must_use]
+    pub fn with_max_retained_rdf_term_bytes(mut self, max_bytes: u64) -> Self {
+        self.max_retained_rdf_term_bytes = max_bytes;
+        self
+    }
+
+    /// Returns the inclusive retained RDF term-byte limit.
+    #[must_use]
+    pub const fn max_retained_rdf_term_bytes(&self) -> u64 {
+        self.max_retained_rdf_term_bytes
     }
 }

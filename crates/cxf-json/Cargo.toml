@@ -6,6 +6,15 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+default = ["semantic-ingestion"]
+semantic-ingestion = ["dep:getrandom", "dep:oxjsonld", "dep:oxrdf"]
+
 [dependencies]
 oxiri.workspace = true
+oxjsonld = { workspace = true, optional = true }
+oxrdf = { workspace = true, optional = true }
 serde_json.workspace = true
+
+[target.wasm32-unknown-unknown.dependencies]
+getrandom = { version = "=0.3.4", features = ["wasm_js"], optional = true }
