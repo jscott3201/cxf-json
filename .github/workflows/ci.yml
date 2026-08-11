@@ -44,6 +44,13 @@ jobs:
             "No LoadDocumentCallback has been set to load remote contexts" \
             crates/cxf-ingest-probe/tests/fixtures > "${report}"
           python3 -c 'import json, sys; report = json.load(open(sys.argv[1])); raise SystemExit(not report["structural_metrics_complete"])' "${report}"
+      - name: Check resource-stress suite
+        run: |
+          report="${RUNNER_TEMP}/resource-stress.json"
+          CXF_BENCHMARK_REVISION="${GITHUB_SHA}" \
+            cargo +1.97.1 run --release --locked -p cxf-ingest-probe \
+              --example report_resource_stress > "${report}"
+          python3 -c 'import json, sys; report = json.load(open(sys.argv[1])); raise SystemExit(report["case_count"] != 16 or report["unexpected_outcomes"] != 0)' "${report}"
 
   wasm:
     runs-on: ubuntu-latest
@@ -79,3 +86,35 @@ jobs:
             --target wasm32-unknown-unknown --prefix none --format '{p}' \
             | sed -E '/^$/d; s/ \(.*\)$//' | sort -u > "${serde_only}"
           diff -u ci/wasm-serde-only-allowlist.txt "${serde_only}"
+
+  coverage-guided-parser:
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: nightly-2026-07-25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned parser-test toolchain
+        run: |
+          rustup toolchain install nightly-2026-07-25 --profile minimal
+          cargo install cargo-fuzz --version 0.13.2 --locked
+          cargo install cargo-deny --version 0.19.0 --locked
+      - name: Check isolated workspace
+        run: |
+          cargo check --manifest-path fuzz/Cargo.toml --locked
+          cargo deny --manifest-path fuzz/Cargo.toml --locked check --config fuzz/deny.toml
+          cargo fuzz check --fuzz-dir fuzz json_preflight
+      - name: Run bounded parser campaign
+        run: |
+          mkdir -p "${RUNNER_TEMP}/parser-corpus"
+          cargo fuzz run --fuzz-dir fuzz json_preflight \
+            "${RUNNER_TEMP}/parser-corpus" crates/cxf-ingest-probe/tests/parser-seeds -- \
+            -runs=100000 -max_len=65536 -timeout=10 \
+            -rss_limit_mb=2048 -malloc_limit_mb=512
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: parser-test-reproducer
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

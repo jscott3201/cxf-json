@@ -1,0 +1,25 @@
+[package]
+name = "cxf-json-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+cxf-ingest-probe = { path = "../crates/cxf-ingest-probe", version = "=0.0.0", default-features = false }
+libfuzzer-sys = "0.4.13"
+
+[[bin]]
+name = "json_preflight"
+path = "fuzz_targets/json_preflight.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+resolver = "2"

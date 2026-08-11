@@ -1,4 +1,10 @@
-use cxf_ingest_probe::{DiagnosticStage, RdfNodeKind, RdfObjectSummary, parse_json_ld};
+#[path = "../tests/support/parser_seeds.rs"]
+mod parser_seeds;
+
+use cxf_ingest_probe::{
+    DiagnosticStage, RdfNodeKind, RdfObjectSummary, StressExpected, parse_json, parse_json_ld,
+    resource_stress_cases,
+};
 
 const COMPACT: &[u8] = include_bytes!("../tests/fixtures/cxf-compact.jsonld");
 const FULL_IRI: &[u8] = include_bytes!("../tests/fixtures/cxf-full-iri.jsonld");
@@ -75,4 +81,26 @@ fn main() {
     nested.extend(std::iter::repeat_n(b']', depth));
     let nested = parse_json_ld(&nested).expect("nesting policy belongs to W-011");
     assert!(nested.quads.is_empty());
+
+    for (name, input) in parser_seeds::PARSER_SEEDS {
+        match parse_json(input) {
+            Ok(document) => assert_eq!(document.source.as_bytes(), *input, "{name}"),
+            Err(failure) => assert_eq!(failure.source.as_bytes(), *input, "{name}"),
+        }
+    }
+
+    for case in resource_stress_cases() {
+        match (case.expected, parse_json_ld(&case.input)) {
+            (StressExpected::Success { quad_count }, Ok(report)) => {
+                assert_eq!(report.quads.len(), quad_count, "{}", case.name);
+            }
+            (StressExpected::Failure { stage }, Err(failure)) => {
+                assert_eq!(failure.diagnostic.stage, stage, "{}", case.name);
+            }
+            (_, result) => panic!(
+                "unexpected resource-stress result for {}: {result:?}",
+                case.name
+            ),
+        }
+    }
 }

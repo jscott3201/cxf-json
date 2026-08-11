@@ -24,5 +24,12 @@ name = "qualify_cxf_corpus"
 required-features = ["oxigraph"]
 
 [[example]]
+name = "report_resource_stress"
+required-features = ["oxigraph"]
+
+[[example]]
 name = "wasm_cxf_smoke"
 required-features = ["oxigraph"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+sha2 = "0.11.0"
