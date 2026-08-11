@@ -123,10 +123,10 @@ fn verify_instrumentation_revision() -> Result<(), String> {
     }
     let status = git_output(
         repository,
-        &["status", "--porcelain=v1", "--untracked-files=no"],
+        &["status", "--porcelain=v1", "--untracked-files=normal"],
     )?;
     if !status.is_empty() {
-        return Err("resource-stress measurements require a clean tracked worktree".to_owned());
+        return Err("resource-stress measurements require a clean worktree".to_owned());
     }
     Ok(())
 }

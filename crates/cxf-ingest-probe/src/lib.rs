@@ -5,6 +5,8 @@
 
 mod dto;
 mod json;
+#[cfg(all(feature = "production-semantic-harness", cxf_json_semantic_harness))]
+pub mod production_harness;
 #[cfg(feature = "oxigraph")]
 mod resource_stress;
 

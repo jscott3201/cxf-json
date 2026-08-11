@@ -1,0 +1,6 @@
+D-029 blocks public untrusted-input release while OxJSONLD runs in process without
+hard cancellation or internal allocation and diagnostic budgets. Native hostile
+input requires a killable, memory-contained worker process with bounded concurrency
+and I/O. Browser and Node hostile input require replaceable Workers with deadlines,
+bounded concurrency, and bounded request/response transfer. In-process parsing may
+not be presented as resource-bounded.

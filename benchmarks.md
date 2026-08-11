@@ -1,14 +1,17 @@
 # Benchmarks
 
-Status: Initial corpus and resource-stress baselines measured 2026-08-10. No
-production parser or performance threshold exists.
+Status: Initial corpus and resource-stress baselines measured 2026-08-10. M1-C6
+adds a private production semantic stage and conditional native, fuzz, and
+Node/WASM evidence harnesses. No clean-revision production timing baseline, public
+parser, or performance threshold exists.
 
 ## Scope
 
-These measurements cover the qualified `cxf-ingest-probe` process before W-007
-adds semantic ingestion to `cxf-json`. They establish instrumentation and a
-comparison format for later parser stages. They do not prove resource safety,
-select admission limits, or represent package performance.
+These measurements cover the qualified `cxf-ingest-probe` process. M1-C6 adds
+private semantic ingestion to `cxf-json`. The recorded numbers still cover only the
+probe; the production harness has no committed five-run baseline yet. The probe
+results establish instrumentation and a comparison format for later parser stages.
+They do not prove resource safety or represent package performance.
 
 The corpus harness reports:
 
@@ -152,14 +155,30 @@ The runner samples linear-memory capacity before and after execution. WASM memor
 cannot shrink, so the final value is also the observed capacity high-water mark.
 It is not a count of live bytes and excludes host runtime memory.
 
+## Production Semantic Harness
+
+The `cxf-json` test-support shim exists only under `cfg(fuzzing)` or the
+package-scoped `cxf_json_semantic_harness` cfg. It reports project-owned outcome and
+metric values without returning source bytes, backend diagnostics, or RDF types.
+Normal package and documentation builds contain no callable parse function.
+
+The native and Node/WASM examples run 32,768 retained values through byte
+admission, bounded JSON preflight, regular offline OxJSONLD processing, and project
+RDF retention. The semantic fuzz target also selects the default, zero-quad, and
+zero-term policies. These harness controls do not bound OxJSONLD work inside one
+iterator step.
+
+No production numbers are recorded until five reports are built from one clean
+committed revision and aggregated with the commands below.
+
 ## Reproduction
 
 The native commands require macOS `/usr/bin/time -l`; RSS output and process
 timing are comparable only on an equivalent environment. Run each workload five
 times. Replace `RUN` in the commands below with the run number. Keep standard
 output and `/usr/bin/time` output separate so `ci/summarize-benchmarks.py` can
-aggregate them. Resource-stress and WASM metric builds and runs reject a revision
-that differs from `HEAD` or a tracked worktree with uncommitted changes.
+aggregate them. Revision-bound metric builds and runs reject a revision that
+differs from `HEAD` or a worktree with tracked or untracked changes.
 
 Create detached worktrees for both historical instrumentation revisions and one
 absolute evidence directory. The commands below use these variables:
@@ -267,6 +286,33 @@ python3 "$STRESS_WORKTREE/ci/summarize-benchmarks.py" wasm \
   "$EVIDENCE_DIR"/wasm-{1,2,3,4,5}.json
 ```
 
+Build and measure the private production semantic path from a clean current
+revision:
+
+```bash
+REVISION="$(git rev-parse HEAD)"
+CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="$REVISION" \
+  cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
+    --no-default-features --features production-semantic-harness \
+    --example report_production_semantic
+for run in 1 2 3 4 5; do
+  /usr/bin/time -l target/release/examples/report_production_semantic \
+    > "$EVIDENCE_DIR/semantic-${run}.json" \
+    2> "$EVIDENCE_DIR/semantic-${run}.time"
+done
+python3 ci/summarize-benchmarks.py semantic-ingestion \
+  "$EVIDENCE_DIR"/semantic-{1,2,3,4,5}.json \
+  --times "$EVIDENCE_DIR"/semantic-{1,2,3,4,5}.time
+
+CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="$REVISION" \
+  cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
+    --no-default-features --features production-semantic-harness \
+    --example wasm_production_semantic --target wasm32-unknown-unknown
+CXF_BENCHMARK_REVISION="$REVISION" node ci/run-wasm-smoke.mjs \
+  target/wasm32-unknown-unknown/release/examples/wasm_production_semantic.wasm \
+  --metrics
+```
+
 `fuzz/README.md` records the pinned coverage-guided parser commands and their
 test-process bounds.
 
@@ -280,10 +326,11 @@ test-process bounds.
 - Process RSS is measured for the full resource-stress suite, not per case.
 - OxJSONLD has no project-controlled hard timeout or allocation budget. Native
   subprocesses and browser/Node Workers remain the termination boundary.
-- W-007 must add stage measurements for ordered DTO construction, private graph
-  indexing, and semantic joins.
-- The next W-011 slice must use this evidence to select or defer member, value,
-  diagnostic, quad, and retained-term limits.
+- M1-C6 uses this evidence for private emitted-quad and retained-term policy. The
+  limits do not bound backend allocation or diagnostic amplification.
+- The conditional harness covers end-to-end production semantics. A clean-revision
+  baseline and separate stage measurements for ordered source construction,
+  private graph indexing, and semantic joins remain W-007/W-022 work.
 
 Update this file whenever a parser stage, corpus pin, dependency version, target,
 or benchmark method changes. Record the tested commit, environment, commands,

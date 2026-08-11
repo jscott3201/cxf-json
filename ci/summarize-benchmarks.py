@@ -265,6 +265,79 @@ def summarize_resource_stress(reports, time_reports):
     }
 
 
+def summarize_semantic_ingestion(reports, time_reports):
+    instrumentation_revision = validate_reports(reports)
+    if len(reports) != len(time_reports):
+        fail("semantic-ingestion report and time-report counts differ")
+    stable_fields = [
+        "workload_version",
+        "retained_values",
+        "input_bytes",
+        "input_sha256",
+        "outcome",
+        "source_matches_input",
+        "max_nesting_depth",
+        "max_object_members",
+        "total_values",
+        "decoded_member_name_bytes",
+        "emitted_rdf_quads",
+        "retained_rdf_term_bytes",
+        "returned_rdf_quads",
+    ]
+    stable = {field: stable_value(reports, field) for field in stable_fields}
+    if re.fullmatch(r"[0-9a-f]{64}", stable["input_sha256"]) is None:
+        fail("input_sha256 is not a lowercase SHA-256 digest")
+    if stable["outcome"] != "success" or not stable["source_matches_input"]:
+        fail("semantic-ingestion reports must describe source-preserving success")
+    if stable["returned_rdf_quads"] != stable["emitted_rdf_quads"]:
+        fail("returned and emitted RDF quad counts differ")
+    elapsed = [report["elapsed_micros"] for report in reports]
+    if any(value == 0 for value in elapsed):
+        fail("semantic-ingestion elapsed time is zero")
+
+    rss = []
+    for path in time_reports:
+        match = rss_pattern.search(Path(path).read_text())
+        if match is None:
+            fail(f"maximum RSS is missing from {path}")
+        rss.append(int(match.group(1)))
+
+    throughput = [stable["input_bytes"] / value for value in elapsed]
+    return {
+        "runs": len(reports),
+        "instrumentation_revision": instrumentation_revision,
+        "workload": {
+            field: stable[field]
+            for field in [
+                "workload_version",
+                "retained_values",
+                "input_bytes",
+                "input_sha256",
+            ]
+        },
+        "structure": {
+            field: stable[field]
+            for field in [
+                "max_nesting_depth",
+                "max_object_members",
+                "total_values",
+                "decoded_member_name_bytes",
+            ]
+        },
+        "rdf": {
+            field: stable[field]
+            for field in [
+                "emitted_rdf_quads",
+                "retained_rdf_term_bytes",
+                "returned_rdf_quads",
+            ]
+        },
+        "elapsed_micros": distribution(elapsed),
+        "throughput_mb_s": distribution(throughput),
+        "maximum_rss_bytes": distribution(rss),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="mode", required=True)
@@ -276,15 +349,20 @@ def main():
     stress = subparsers.add_parser("resource-stress")
     stress.add_argument("reports", nargs="+")
     stress.add_argument("--times", nargs="+", required=True)
+    semantic = subparsers.add_parser("semantic-ingestion")
+    semantic.add_argument("reports", nargs="+")
+    semantic.add_argument("--times", nargs="+", required=True)
     arguments = parser.parse_args()
 
     reports = load_json(arguments.reports)
     validate_unique_paths(arguments.reports, "report")
-    if arguments.mode in ["corpus", "resource-stress"]:
+    if arguments.mode in ["corpus", "resource-stress", "semantic-ingestion"]:
         validate_unique_paths(arguments.times, "time-report")
         validate_time_pairs(arguments.reports, arguments.times)
         if arguments.mode == "corpus":
             summary = summarize_corpus(reports, arguments.times)
+        elif arguments.mode == "semantic-ingestion":
+            summary = summarize_semantic_ingestion(reports, arguments.times)
         else:
             summary = summarize_resource_stress(reports, arguments.times)
     else:

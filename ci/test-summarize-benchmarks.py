@@ -99,6 +99,27 @@ def stress_report(run_id, digest="0" * 64):
     }
 
 
+def semantic_report(run_id, digest="0" * 64):
+    return {
+        "run_id": run_id,
+        "instrumentation_revision": "a" * 40,
+        "workload_version": 1,
+        "retained_values": 32_768,
+        "input_bytes": 131_119,
+        "input_sha256": digest,
+        "outcome": "success",
+        "source_matches_input": True,
+        "max_nesting_depth": 2,
+        "max_object_members": 2,
+        "total_values": 32_771,
+        "decoded_member_name_bytes": 34,
+        "emitted_rdf_quads": 32_768,
+        "retained_rdf_term_bytes": 2_392_064,
+        "returned_rdf_quads": 32_768,
+        "elapsed_micros": 10,
+    }
+
+
 class SummaryTests(unittest.TestCase):
     def test_summarizes_five_pinned_corpus_runs(self):
         reports = [corpus_report(str(run)) for run in range(5)]
@@ -147,6 +168,33 @@ class SummaryTests(unittest.TestCase):
         reports[4]["cases"][0]["input_sha256"] = "1" * 64
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             benchmarks.summarize_resource_stress(reports, ["unused"] * 5)
+
+    def test_summarizes_five_semantic_ingestion_runs(self):
+        reports = [semantic_report(str(run)) for run in range(5)]
+        with tempfile.TemporaryDirectory() as directory:
+            times = []
+            for run in range(5):
+                path = Path(directory) / f"semantic-{run}.time"
+                path.write_text(" 16384  maximum resident set size\n")
+                times.append(path)
+            summary = benchmarks.summarize_semantic_ingestion(reports, times)
+
+        self.assertEqual(summary["workload"]["retained_values"], 32_768)
+        self.assertEqual(summary["rdf"]["returned_rdf_quads"], 32_768)
+        self.assertEqual(summary["elapsed_micros"]["median"], 10)
+        self.assertEqual(summary["maximum_rss_bytes"]["median"], 16_384)
+
+    def test_rejects_changed_semantic_workload(self):
+        reports = [semantic_report(str(run)) for run in range(5)]
+        reports[4]["input_sha256"] = "1" * 64
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            benchmarks.summarize_semantic_ingestion(reports, ["unused"] * 5)
+
+    def test_rejects_semantic_graph_count_mismatch(self):
+        reports = [semantic_report(str(run)) for run in range(5)]
+        reports[4]["returned_rdf_quads"] = 1
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            benchmarks.summarize_semantic_ingestion(reports, ["unused"] * 5)
 
     def test_requires_five_reports(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

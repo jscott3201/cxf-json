@@ -1,20 +1,20 @@
 # CXF project profile
 
-Profile version: 0.1.2
+Profile version: 0.1.3
 
-Status: Core contract with input and JSON-structure options; no public parser or
-conformance profile.
+Status: Core contract with input, JSON-structure, and RDF output options; no
+supported public parser or conformance profile.
 
-Compatibility impact: Additive JSON-structure options. ADR 0006 records the
-machine-readable `Additive` classification.
+Compatibility impact: Additive RDF output options and private semantic feature.
+ADR 0007 records the machine-readable `Additive` classification.
 
 ## Scope
 
-Version 0.1.2 defines the owned Rust foundations, input-byte admission, and
-structural JSON options used by later CXF ingestion. It does not define accepted
-public JSON or CXF syntax, a parse entry point, typed CXF values, extension records,
-validation rules, JSON-LD processing limits, context loading, host serialization,
-or package-release stability.
+Version 0.1.3 defines the owned Rust foundations, input-byte admission, structural
+JSON options, and RDF output-retention options used by later CXF ingestion. It does
+not define accepted public JSON or CXF syntax, a supported parse entry point,
+typed CXF values, extension records, validation rules, public JSON-LD processing
+behavior, context loading, host serialization, or package-release stability.
 
 The `cxf-json` package remains unpublished at package version 0.0.0. Its public
 contract is governed by this profile even before package publication.
@@ -27,8 +27,14 @@ The crate exports `SourceDocument`, `AdmissionError`, `DocumentIri`,
 `ParseOptions`.
 
 Public signatures MUST NOT expose Serde, OxIRI, OxJSONLD, OxRDF, filesystem, HTTP,
-Python, JavaScript, or other host-runtime values. Profile 0.1.2 defines no Serde
+Python, JavaScript, or other host-runtime values. Profile 0.1.3 defines no Serde
 serialization contract for public core types.
+
+Normal package and documentation builds export only the types listed above. A
+project-controlled build with `cfg(fuzzing)` or `cfg(cxf_json_semantic_harness)`
+also exports the doc-hidden `test_support` observation module. That module is not a
+supported package API. It returns project-owned outcome and metric values without
+returning source bytes, backend diagnostics, or RDF values.
 
 ## Source bytes
 
@@ -87,6 +93,50 @@ A zero limit permits empty member names but rejects any nonempty decoded name.
 corresponding `with_max_*` methods MUST replace one limit without changing the
 others, and each accessor MUST return the configured value.
 
+## RDF output options
+
+The RDF output limits are inclusive unsigned 64-bit values. Every option accepts
+zero. Profile 0.1.3 defines these options for private semantic ingestion but no
+public function that applies them.
+
+`ParseOptions::DEFAULT_MAX_RDF_QUADS` MUST be 65,536. Each quad emitted by the
+JSON-LD processor counts before graph deduplication, including repeated identical
+quads. A zero limit permits a result that emits no quads and rejects the first
+emitted quad.
+
+`ParseOptions::DEFAULT_MAX_RETAINED_RDF_TERM_BYTES` MUST be 8,388,608. The count is
+the UTF-8 byte length of each owned occurrence of the subject, predicate, object,
+literal datatype, optional language tag, and non-default graph name. Repeated
+strings and processor-generated blank-node identifiers count each time they occur.
+A zero limit permits only a result that retains no RDF term bytes.
+
+`ParseOptions::new` and `ParseOptions::default` MUST use both defaults.
+`ParseOptions::with_max_rdf_quads` and
+`ParseOptions::with_max_retained_rdf_term_bytes` MUST replace one limit without
+changing any other option. Their accessors MUST return the configured values.
+
+For a quad that would exceed both limits, the quad limit takes precedence. Counter
+and byte-total overflow is the corresponding limit failure. Limits are checked
+before the emitted quad is retained in project output. They do not bound OxJSONLD
+temporary allocations, internal diagnostic buffers, process memory, or execution
+time.
+
+## Private semantic feature
+
+The package's default `semantic-ingestion` feature enables optional OxJSONLD and
+OxRDF dependencies plus the target-only `getrandom` `wasm_js` feature required by
+anonymous-node processing on `wasm32-unknown-unknown`. Disabling default features
+MUST omit those three optional dependencies and retain the source and JSON
+preflight contract.
+
+The feature alone exposes no supported parse function or backend type. Its private
+semantic path requires a configured `DocumentIri`, installs no remote loader,
+returns at most one fixed project failure, and discards a partial graph on failure.
+The conditional instrumentation module may observe this path in project fuzz,
+native-report, and Node/WASM smoke builds. It is not a supported package API. The
+one returned failure does not bound OxJSONLD's internal diagnostic allocation. The
+target-only entropy exception remains blocked from package release under D-021.
+
 ## Document IRI
 
 `DocumentIri::parse` MUST accept an absolute RFC 3987 IRI and MUST reject a
@@ -121,11 +171,11 @@ Diagnostic severity values are `Warning` and `Error`. Diagnostic stages are
 message, optional byte range, optional JSON Pointer, and optional RDF-term
 evidence. Range, pointer, and RDF-term evidence are independent; the presence of
 one does not imply either other value exists. Consumers MUST match a future
-diagnostic by code and structured fields, not by message text. Version 0.1.2
-defines no concrete diagnostic codes or emitting behavior.
+diagnostic by code and structured fields, not by message text. Version 0.1.3
+defines no concrete diagnostic codes or public emitting behavior.
 
 `ParseError` is an owned envelope for a future admitted source document and one
-diagnostic. Version 0.1.2 defines the type and accessors but no function that
+diagnostic. Version 0.1.3 defines the type and accessors but no public function that
 constructs or returns it.
 
 ## Compatibility

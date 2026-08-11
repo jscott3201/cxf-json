@@ -6,12 +6,12 @@ use cxf_ingest_probe::{
     resource_stress_cases,
 };
 
-const COMPACT: &[u8] = include_bytes!("../tests/fixtures/cxf-compact.jsonld");
-const FULL_IRI: &[u8] = include_bytes!("../tests/fixtures/cxf-full-iri.jsonld");
-const ORDER_A: &[u8] = include_bytes!("../tests/fixtures/cxf-order-a.jsonld");
-const ORDER_B: &[u8] = include_bytes!("../tests/fixtures/cxf-order-b.jsonld");
-const CONTEXT_LIST: &[u8] = include_bytes!("../tests/fixtures/cxf-context-list.jsonld");
-const REMOTE_CONTEXT: &[u8] = include_bytes!("../tests/fixtures/remote-context.jsonld");
+const COMPACT: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/cxf-compact.jsonld");
+const FULL_IRI: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/cxf-full-iri.jsonld");
+const ORDER_A: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/cxf-order-a.jsonld");
+const ORDER_B: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/cxf-order-b.jsonld");
+const CONTEXT_LIST: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/cxf-context-list.jsonld");
+const REMOTE_CONTEXT: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/remote-context.jsonld");
 const ANONYMOUS: &[u8] = br#"{
   "@context": {"label": "https://example.test/label"},
   "label": "anonymous"

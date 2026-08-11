@@ -2,11 +2,11 @@
 
 use cxf_ingest_probe::{RdfObjectSummary, parse_json_ld};
 
-const COMPACT: &[u8] = include_bytes!("fixtures/cxf-compact.jsonld");
-const FULL_IRI: &[u8] = include_bytes!("fixtures/cxf-full-iri.jsonld");
-const ORDER_A: &[u8] = include_bytes!("fixtures/cxf-order-a.jsonld");
-const ORDER_B: &[u8] = include_bytes!("fixtures/cxf-order-b.jsonld");
-const CONTEXT_LIST: &[u8] = include_bytes!("fixtures/cxf-context-list.jsonld");
+const COMPACT: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/cxf-compact.jsonld");
+const FULL_IRI: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/cxf-full-iri.jsonld");
+const ORDER_A: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/cxf-order-a.jsonld");
+const ORDER_B: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/cxf-order-b.jsonld");
+const CONTEXT_LIST: &[u8] = include_bytes!("../../cxf-json/tests/fixtures/cxf-context-list.jsonld");
 
 const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const S231P: &str = "http://data.ashrae.org/S231P#";
