@@ -128,6 +128,7 @@ class SummaryTests(unittest.TestCase):
 
     def test_summarizes_five_resource_stress_runs(self):
         reports = [stress_report(str(run)) for run in range(5)]
+        reports[4]["cases"][0]["metrics"]["rdf_term_bytes"] = 4
         with tempfile.TemporaryDirectory() as directory:
             times = []
             for run in range(5):
@@ -138,6 +139,7 @@ class SummaryTests(unittest.TestCase):
 
         self.assertEqual(summary["generator_version"], 1)
         self.assertEqual(summary["cases"][0]["preflight_micros"]["median"], 2)
+        self.assertEqual(summary["cases"][0]["rdf_term_bytes"]["maximum"], 4)
         self.assertEqual(summary["maximum_rss_bytes"]["median"], 8192)
 
     def test_rejects_changed_resource_stress_case(self):

@@ -175,7 +175,7 @@ def summarize_wasm(reports):
 
 
 def stress_case_identity(case):
-    return {
+    identity = {
         field: case[field]
         for field in [
             "name",
@@ -185,9 +185,12 @@ def stress_case_identity(case):
             "input_sha256",
             "expected",
             "actual",
-            "metrics",
         ]
     }
+    identity["json_metrics"] = (
+        None if case["metrics"] is None else case["metrics"]["json"]
+    )
+    return identity
 
 
 def summarize_resource_stress(reports, time_reports):
@@ -228,9 +231,21 @@ def summarize_resource_stress(reports, time_reports):
             json_ld_distribution = None
         else:
             json_ld_distribution = distribution(json_ld)
+        rdf_term_bytes = [
+            None if report["cases"][index]["metrics"] is None
+            else report["cases"][index]["metrics"]["rdf_term_bytes"]
+            for report in reports
+        ]
+        if any(value is None for value in rdf_term_bytes):
+            if not all(value is None for value in rdf_term_bytes):
+                fail(f"{identity['name']} has inconsistent RDF term metrics")
+            rdf_term_distribution = None
+        else:
+            rdf_term_distribution = distribution(rdf_term_bytes)
         cases.append(
             {
                 **identity,
+                "rdf_term_bytes": rdf_term_distribution,
                 "preflight_micros": distribution(preflight),
                 "json_ld_micros": json_ld_distribution,
             }
