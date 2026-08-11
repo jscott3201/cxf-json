@@ -2,7 +2,8 @@ use std::{
     collections::BTreeMap,
     env,
     io::{self, Write},
-    process::{self, ExitCode},
+    path::Path,
+    process::{self, Command, ExitCode},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -58,6 +59,10 @@ enum ActualReport {
 }
 
 fn main() -> ExitCode {
+    if let Err(error) = verify_instrumentation_revision() {
+        eprintln!("{error}");
+        return ExitCode::FAILURE;
+    }
     let mut arguments = env::args().skip(1);
     let case_name = match arguments.next() {
         None => None,
@@ -97,6 +102,59 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn verify_instrumentation_revision() -> Result<(), String> {
+    let revision = option_env!("CXF_BENCHMARK_REVISION").ok_or_else(|| {
+        "CXF_BENCHMARK_REVISION must identify the clean checkout being measured".to_owned()
+    })?;
+    if !is_commit_id(revision) {
+        return Err("CXF_BENCHMARK_REVISION must be a 40-digit commit ID".to_owned());
+    }
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| "probe crate must be inside the repository workspace".to_owned())?;
+    let head = git_output(repository, &["rev-parse", "HEAD"])?;
+    if head.trim() != revision {
+        return Err(format!(
+            "instrumentation revision mismatch: expected {revision}, got {}",
+            head.trim()
+        ));
+    }
+    let status = git_output(
+        repository,
+        &["status", "--porcelain=v1", "--untracked-files=no"],
+    )?;
+    if !status.is_empty() {
+        return Err("resource-stress measurements require a clean tracked worktree".to_owned());
+    }
+    Ok(())
+}
+
+fn is_commit_id(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn git_output(repository: &Path, arguments: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("-C")
+        .arg(repository)
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    String::from_utf8(output.stdout).map_err(|_| "git returned non-UTF-8 output".to_owned())
 }
 
 fn report(case_name: Option<&str>) -> Result<ResourceStressReport, String> {
@@ -222,5 +280,13 @@ mod tests {
                 .iter()
                 .all(|case| case.input_sha256.len() == 64)
         );
+    }
+
+    #[test]
+    fn instrumentation_revision_requires_full_lower_hex() {
+        assert!(is_commit_id(&"a".repeat(40)));
+        assert!(!is_commit_id(&"a".repeat(39)));
+        assert!(!is_commit_id(&"A".repeat(40)));
+        assert!(!is_commit_id(&"g".repeat(40)));
     }
 }

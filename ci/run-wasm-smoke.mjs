@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { createHash, randomUUID, webcrypto } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 
 const wasmPath = process.argv[2];
 const reportMetrics = process.argv.includes("--metrics");
@@ -10,6 +12,27 @@ if (!wasmPath) {
 }
 if (reportMetrics && !/^[0-9a-f]{40}$/.test(instrumentationRevision ?? "")) {
   throw new Error("--metrics requires CXF_BENCHMARK_REVISION as a 40-digit commit ID");
+}
+if (reportMetrics) {
+  const repository = fileURLToPath(new URL("../", import.meta.url));
+  const git = (...args) =>
+    execFileSync("git", ["-C", repository, ...args], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_NO_LAZY_FETCH: "1",
+        GIT_OPTIONAL_LOCKS: "0",
+      },
+    });
+  const head = git("rev-parse", "HEAD").trim();
+  if (head !== instrumentationRevision) {
+    throw new Error(
+      `instrumentation revision mismatch: expected ${instrumentationRevision}, got ${head}`,
+    );
+  }
+  if (git("status", "--porcelain=v1", "--untracked-files=no") !== "") {
+    throw new Error("WASM measurements require a clean tracked worktree");
+  }
 }
 
 const bytes = await readFile(wasmPath);
