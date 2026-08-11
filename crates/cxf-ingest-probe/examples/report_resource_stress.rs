@@ -105,9 +105,8 @@ fn main() -> ExitCode {
 }
 
 fn verify_instrumentation_revision() -> Result<(), String> {
-    let revision = option_env!("CXF_BENCHMARK_REVISION").ok_or_else(|| {
-        "CXF_BENCHMARK_REVISION must identify the clean checkout being measured".to_owned()
-    })?;
+    let revision = option_env!("CXF_VERIFIED_BENCHMARK_REVISION")
+        .ok_or_else(|| "the artifact was not built in benchmark mode".to_owned())?;
     if !is_commit_id(revision) {
         return Err("CXF_BENCHMARK_REVISION must be a 40-digit commit ID".to_owned());
     }
@@ -140,11 +139,7 @@ fn is_commit_id(value: &str) -> bool {
 }
 
 fn git_output(repository: &Path, arguments: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .env("GIT_NO_LAZY_FETCH", "1")
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .arg("-C")
-        .arg(repository)
+    let output = git_command(repository)
         .args(arguments)
         .output()
         .map_err(|error| format!("failed to run git: {error}"))?;
@@ -155,6 +150,43 @@ fn git_output(repository: &Path, arguments: &[&str]) -> Result<String, String> {
         ));
     }
     String::from_utf8(output.stdout).map_err(|_| "git returned non-UTF-8 output".to_owned())
+}
+
+fn git_command(repository: &Path) -> Command {
+    let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let mut command = Command::new("git");
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_NAMESPACE")
+        .env_remove("GIT_GRAFT_FILE")
+        .env_remove("GIT_REPLACE_REF_BASE")
+        .env_remove("GIT_CONFIG_PARAMETERS")
+        .env_remove("GIT_CONFIG_COUNT")
+        .env_remove("GIT_CONFIG_SYSTEM")
+        .env_remove("GIT_CONFIG_GLOBAL")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", null_config)
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("-c")
+        .arg(format!("core.hooksPath={null_config}"))
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
+            "-c",
+            "core.preloadIndex=false",
+        ])
+        .arg("-C")
+        .arg(repository);
+    command
 }
 
 fn report(case_name: Option<&str>) -> Result<ResourceStressReport, String> {
@@ -241,7 +273,7 @@ fn report(case_name: Option<&str>) -> Result<ResourceStressReport, String> {
 
     Ok(ResourceStressReport {
         run_id,
-        instrumentation_revision: option_env!("CXF_BENCHMARK_REVISION"),
+        instrumentation_revision: option_env!("CXF_VERIFIED_BENCHMARK_REVISION"),
         generator_version: 1,
         case_count: cases.len(),
         cases,
@@ -288,5 +320,29 @@ mod tests {
         assert!(!is_commit_id(&"a".repeat(39)));
         assert!(!is_commit_id(&"A".repeat(40)));
         assert!(!is_commit_id(&"g".repeat(40)));
+    }
+
+    #[test]
+    fn git_commands_ignore_repository_overrides() {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let command = git_command(repository);
+
+        for name in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_CONFIG_SYSTEM",
+        ] {
+            assert!(
+                command
+                    .get_envs()
+                    .any(|(key, value)| key == name && value.is_none()),
+                "{name} must be removed"
+            );
+        }
+        assert!(command.get_envs().any(|(key, value)| {
+            key == "GIT_NO_REPLACE_OBJECTS" && value.is_some_and(|value| value == "1")
+        }));
     }
 }

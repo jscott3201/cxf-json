@@ -17,6 +17,43 @@ const ANONYMOUS: &[u8] = br#"{
   "label": "anonymous"
 }"#;
 
+const VERIFIED_REVISION: &str = match option_env!("CXF_VERIFIED_BENCHMARK_REVISION") {
+    Some(revision) => revision,
+    None => "",
+};
+
+fn revision_word(index: usize) -> u32 {
+    if VERIFIED_REVISION.len() != 40 {
+        return 0;
+    }
+    u32::from_str_radix(&VERIFIED_REVISION[index * 8..index * 8 + 8], 16).unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cxf_benchmark_revision_0() -> u32 {
+    revision_word(0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cxf_benchmark_revision_1() -> u32 {
+    revision_word(1)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cxf_benchmark_revision_2() -> u32 {
+    revision_word(2)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cxf_benchmark_revision_3() -> u32 {
+    revision_word(3)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cxf_benchmark_revision_4() -> u32 {
+    revision_word(4)
+}
+
 fn main() {
     let compact = parse_json_ld(COMPACT).expect("compact CXF should parse");
     let full_iri = parse_json_ld(FULL_IRI).expect("full-IRI CXF should parse");

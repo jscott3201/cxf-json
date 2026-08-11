@@ -15,15 +15,53 @@ if (reportMetrics && !/^[0-9a-f]{40}$/.test(instrumentationRevision ?? "")) {
 }
 if (reportMetrics) {
   const repository = fileURLToPath(new URL("../", import.meta.url));
+  const gitEnv = { ...process.env };
+  for (const name of [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_GRAFT_FILE",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_GLOBAL",
+  ]) {
+    delete gitEnv[name];
+  }
+  const nullConfig = process.platform === "win32" ? "NUL" : "/dev/null";
+  Object.assign(gitEnv, {
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: nullConfig,
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_NO_LAZY_FETCH: "1",
+    GIT_OPTIONAL_LOCKS: "0",
+  });
   const git = (...args) =>
-    execFileSync("git", ["-C", repository, ...args], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        GIT_NO_LAZY_FETCH: "1",
-        GIT_OPTIONAL_LOCKS: "0",
+    execFileSync(
+      "git",
+      [
+        "-c",
+        `core.hooksPath=${nullConfig}`,
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
+        "-c",
+        "core.preloadIndex=false",
+        "-C",
+        repository,
+        ...args,
+      ],
+      {
+        encoding: "utf8",
+        env: gitEnv,
       },
-    });
+    );
   const head = git("rev-parse", "HEAD").trim();
   if (head !== instrumentationRevision) {
     throw new Error(
@@ -71,6 +109,20 @@ if (!(wasmMemory instanceof WebAssembly.Memory)) {
 }
 if (typeof instance.exports.main !== "function") {
   throw new Error("WASM smoke module does not export main");
+}
+if (reportMetrics) {
+  const embeddedRevision = Array.from({ length: 5 }, (_, index) => {
+    const readWord = instance.exports[`cxf_benchmark_revision_${index}`];
+    if (typeof readWord !== "function") {
+      throw new Error("WASM smoke module does not export its benchmark revision");
+    }
+    return (readWord() >>> 0).toString(16).padStart(8, "0");
+  }).join("");
+  if (embeddedRevision !== instrumentationRevision) {
+    throw new Error(
+      `WASM benchmark revision mismatch: expected ${instrumentationRevision}, got ${embeddedRevision}`,
+    );
+  }
 }
 const initialMemoryBytes = wasmMemory.buffer.byteLength;
 const executeStarted = performance.now();
