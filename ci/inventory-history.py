@@ -441,10 +441,14 @@ def parse_tag_object(data):
     header, separator, message = data.partition(b"\n\n")
     if not separator:
         raise InventoryError("annotated tag object has no message separator")
+    header_lines = header.splitlines()
+    expected_headers = [b"object", b"type", b"tag", b"tagger"]
     headers = {}
-    for line in header.splitlines():
+    for index, line in enumerate(header_lines):
         name, separator, value = line.partition(b" ")
-        if separator and name in {b"object", b"type", b"tagger"}:
+        if index >= len(expected_headers) or name != expected_headers[index]:
+            raise InventoryError("annotated tag object has noncanonical headers")
+        if separator:
             if name in headers:
                 raise InventoryError("annotated tag object has duplicate headers")
             headers[name] = value
@@ -454,7 +458,13 @@ def parse_tag_object(data):
     except UnicodeDecodeError as error:
         raise InventoryError("annotated tag object has malformed target headers") from error
     tagger = headers.get(b"tagger")
-    if not OID_PATTERN.fullmatch(target_id) or not target_type or tagger is None:
+    if (
+        len(header_lines) != len(expected_headers)
+        or not OID_PATTERN.fullmatch(target_id)
+        or not target_type
+        or not headers.get(b"tag")
+        or tagger is None
+    ):
         raise InventoryError("annotated tag object has malformed headers")
     tagger_match = re.fullmatch(rb"(.*) <([^<>]*)> (\d+) ([+-]\d{4})", tagger)
     if tagger_match is None:
@@ -513,6 +523,7 @@ def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget, runner
     hydrated = []
     errors = []
     tag_budget = 0
+    tag_cache = {}
     for ref in refs:
         ref = dict(ref)
         object_type = ref["object_type"]
@@ -523,24 +534,35 @@ def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget, runner
         tag_data = None
         ref_error_count = len(errors)
         if object_type == "tag":
-            tag_size = int(
-                git_text(
-                    repository, "cat-file", "-s", object_id, runner=runner
-                ).strip()
-            )
-            if tag_size > MAX_TAG_OBJECT_BYTES:
-                raise InventoryError(
-                    f"tag object exceeds {MAX_TAG_OBJECT_BYTES} bytes: {object_id}"
+            cached = tag_cache.get(object_id)
+            if cached is None:
+                tag_size = int(
+                    git_text(
+                        repository, "cat-file", "-s", object_id, runner=runner
+                    ).strip()
                 )
-            tag_budget += tag_size
-            if tag_budget > MAX_TOTAL_TAG_OBJECT_BYTES:
-                raise InventoryError(
-                    f"tag object bytes exceed {MAX_TOTAL_TAG_OBJECT_BYTES}"
+                if tag_size > MAX_TAG_OBJECT_BYTES:
+                    raise InventoryError(
+                        f"tag object exceeds {MAX_TAG_OBJECT_BYTES} bytes: {object_id}"
+                    )
+                tag_budget += tag_size
+                if tag_budget > MAX_TOTAL_TAG_OBJECT_BYTES:
+                    raise InventoryError(
+                        f"tag object bytes exceed {MAX_TOTAL_TAG_OBJECT_BYTES}"
+                    )
+                tag_data = read_git_object(
+                    repository, "tag", object_id, tag_size, runner=runner
                 )
-            tag_data = read_git_object(
-                repository, "tag", object_id, tag_size, runner=runner
-            )
-            target_id, target_type, parsed_metadata = parse_tag_object(tag_data)
+                target_id, target_type, parsed_metadata = parse_tag_object(tag_data)
+                tag_cache[object_id] = (
+                    tag_size,
+                    tag_data,
+                    target_id,
+                    target_type,
+                    parsed_metadata,
+                )
+            else:
+                tag_size, tag_data, target_id, target_type, parsed_metadata = cached
             if tag_size > max_scanned_object_bytes:
                 errors.append(f"{display_name} tag metadata exceeds the content scan cap")
                 commit = target_id if target_type == "commit" else None
@@ -717,9 +739,12 @@ def validate_repository(repository, remote_url, runner=None):
 
 def commit_parents(data):
     parents = []
-    for line in data.partition(b"\n\n")[0].splitlines():
-        if not line.startswith(b"parent "):
-            continue
+    header_lines = data.partition(b"\n\n")[0].splitlines()
+    if not header_lines or not header_lines[0].startswith(b"tree "):
+        raise InventoryError("commit object has no canonical tree header")
+    index = 1
+    while index < len(header_lines) and header_lines[index].startswith(b"parent "):
+        line = header_lines[index]
         try:
             parent = line[7:].decode("ascii", "strict")
         except UnicodeDecodeError as error:
@@ -727,6 +752,9 @@ def commit_parents(data):
         if not OID_PATTERN.fullmatch(parent):
             raise InventoryError("commit object has a malformed parent ID")
         parents.append(parent)
+        index += 1
+    if any(line.startswith(b"parent ") for line in header_lines[index:]):
+        raise InventoryError("commit object has a noncanonical parent header")
     return parents
 
 
@@ -762,7 +790,7 @@ def collect_commits(repository, refs, runner=None):
 
 
 def parse_identity(value, field):
-    match = re.fullmatch(rb"(.*) <([^<>]*)> (-?\d+) ([+-]\d{4})", value)
+    match = re.fullmatch(rb"(.*) <([^<>]*)> (\d+) ([+-]\d{4})", value)
     if match is None:
         raise InventoryError(f"commit object has malformed {field} metadata")
     offset_text = match.group(4).decode("ascii")
@@ -903,6 +931,8 @@ def parse_tree_object(data, tree_budget=None):
         object_end = object_start + 20
         if object_end > len(data):
             raise InventoryError("tree object has a truncated object ID")
+        if data[object_start:object_end] == b"\0" * 20:
+            raise InventoryError("tree object has a null object ID")
         try:
             mode_text = mode.decode("ascii", "strict")
         except UnicodeDecodeError as error:

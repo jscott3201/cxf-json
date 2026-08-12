@@ -764,7 +764,16 @@ class HistoryInventoryTests(unittest.TestCase):
             b"type commit\n"
             b"tagger Test <test@example.test> 1 +0000\n\nmessage\n"
         )
-        with self.assertRaisesRegex(history.InventoryError, "duplicate headers"):
+        with self.assertRaisesRegex(history.InventoryError, "headers"):
+            history.parse_tag_object(data)
+
+    def test_rejects_tag_without_canonical_tag_header(self):
+        data = (
+            b"object " + b"1" * 40 + b"\n"
+            b"type commit\n"
+            b"tagger Test <test@example.test> 1 +0000\n\nmessage\n"
+        )
+        with self.assertRaisesRegex(history.InventoryError, "noncanonical headers"):
             history.parse_tag_object(data)
 
     def test_rejects_duplicate_commit_identity_headers(self):
@@ -776,6 +785,16 @@ class HistoryInventoryTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(history.InventoryError, "duplicate identity"):
             history.commit_metadata("1" * 40, data)
+
+    def test_rejects_noncanonical_parent_and_negative_identity_date(self):
+        with self.assertRaisesRegex(history.InventoryError, "noncanonical parent"):
+            history.commit_parents(
+                b"tree " + b"1" * 40 + b"\n"
+                b"author Test <test@example.test> 1 +0000\n"
+                b"parent " + b"2" * 40 + b"\n\nmessage\n"
+            )
+        with self.assertRaisesRegex(history.InventoryError, "malformed author"):
+            history.parse_identity(b"Test <test@example.test> -1 +0000", "author")
 
     def test_rejects_noncanonical_tree_mode_and_duplicate_name(self):
         object_id = b"\x11" * 20
@@ -791,6 +810,8 @@ class HistoryInventoryTests(unittest.TestCase):
             history.parse_tree_object(
                 b"100644 b\0" + object_id + b"100644 a\0" + object_id
             )
+        with self.assertRaisesRegex(history.InventoryError, "null object ID"):
+            history.parse_tree_object(b"160000 submodule\0" + b"\0" * 20)
 
     def test_rejects_unterminated_tree_output(self):
         with self.assertRaises(history.InventoryError):
