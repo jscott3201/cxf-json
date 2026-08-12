@@ -1,20 +1,22 @@
 # CXF project profile
 
-Profile version: 0.1.3
+Profile version: 0.1.4
 
-Status: Core contract with input, JSON-structure, and RDF output options; no
-supported public parser or conformance profile.
+Status: Core contract with input, JSON-structure, RDF output options, and a
+private typed CXF projection stage; no supported public parser or conformance
+profile.
 
-Compatibility impact: Additive RDF output options and private semantic feature.
-ADR 0007 records the machine-readable `Additive` classification.
+Compatibility impact: Additive private typed-projection module without public
+behavior. ADR 0008 records the machine-readable `Additive` classification.
 
 ## Scope
 
-Version 0.1.3 defines the owned Rust foundations, input-byte admission, structural
-JSON options, and RDF output-retention options used by later CXF ingestion. It does
-not define accepted public JSON or CXF syntax, a supported parse entry point,
-typed CXF values, extension records, validation rules, public JSON-LD processing
-behavior, context loading, host serialization, or package-release stability.
+Version 0.1.4 defines the owned Rust foundations, input-byte admission, structural
+JSON options, RDF output-retention options, and a private typed CXF projection
+stage used by later CXF ingestion. It does not define accepted public JSON or CXF
+syntax, a supported parse entry point, typed CXF values, extension records,
+validation rules, public JSON-LD processing behavior, context loading, host
+serialization, or package-release stability.
 
 The `cxf-json` package remains unpublished at package version 0.0.0. Its public
 contract is governed by this profile even before package publication.
@@ -27,7 +29,7 @@ The crate exports `SourceDocument`, `AdmissionError`, `DocumentIri`,
 `ParseOptions`.
 
 Public signatures MUST NOT expose Serde, OxIRI, OxJSONLD, OxRDF, filesystem, HTTP,
-Python, JavaScript, or other host-runtime values. Profile 0.1.3 defines no Serde
+Python, JavaScript, or other host-runtime values. Profile 0.1.4 defines no Serde
 serialization contract for public core types.
 
 Normal package and documentation builds export only the types listed above. A
@@ -177,6 +179,35 @@ defines no concrete diagnostic codes or public emitting behavior.
 `ParseError` is an owned envelope for a future admitted source document and one
 diagnostic. Version 0.1.3 defines the type and accessors but no public function that
 constructs or returns it.
+
+## Private typed projection
+
+The crate's private typed CXF projection consumes the retained ordered source
+view and classifies the OBC section 8.2 core vocabulary into owned structures.
+It MUST NOT add a public type, parse entry point, validation rule, or Serde
+contract, and therefore appears in no public signature or documentation build.
+
+The projection registers vocabulary terms by full internal IRI identity across
+the distinct `http://data.ashrae.org/S231#`, `http://data.ashrae.org/S231P#`,
+and `https://data.ashrae.org/S231P#` namespace generations. Distinct IRIs,
+including the `connectedTo` and `isConnectedTo` spellings, MUST keep distinct
+internal identity; the projection MUST NOT normalize, percent-decode, or merge
+them. Compacted `prefix:local` spellings MUST register only when the document's
+own `@context` maps the prefix to a registered namespace IRI; the projection
+MUST NOT implement a partial JSON-LD context expander.
+
+Instance references MUST resolve only by exact authored-string equality.
+Unknown predicates, unrecognized spellings, wrong-shaped members, and graphics
+payloads MUST degrade into verbatim CXF extension records, never into silence,
+guesses, or process failure. CXF values stay opaque: strings are retained
+decoded, while exact number and boolean spelling remains available only in the
+retained source bytes that the projection owns.
+
+Projection findings, including weakly typed nodes, conflicting type
+assertions, known broken-emitter value artifacts, malformed references,
+unresolved references, and duplicate node identifiers, use the private
+`CXF-P-000` through `CXF-P-006` codes. Version 0.1.4 keeps these codes private;
+W-014 owns any future public stabilization.
 
 ## Compatibility
 
