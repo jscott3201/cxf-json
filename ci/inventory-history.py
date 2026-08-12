@@ -8,6 +8,7 @@ import signal
 import shlex
 import subprocess
 import sys
+import tempfile
 import threading
 import unicodedata
 from pathlib import Path
@@ -1206,6 +1207,30 @@ def render_report(inventory, invocation):
     return "\n".join(lines)
 
 
+def write_report(path, contents):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(contents)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
 def parse_args(arguments):
     parser = argparse.ArgumentParser(
         description="Inventory commit histories reachable from local refs and compare remote refs."
@@ -1258,8 +1283,7 @@ def main(arguments=None):
             ]
         )
         report = Path(parsed.report)
-        report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(render_report(inventory, invocation), encoding="utf-8")
+        write_report(report, render_report(inventory, invocation))
     except (InventoryError, OSError, UnicodeError, subprocess.SubprocessError) as error:
         print(f"history inventory error: {error}", file=sys.stderr)
         return 2

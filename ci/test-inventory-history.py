@@ -185,6 +185,27 @@ class HistoryInventoryTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertIn("Status: INCOMPLETE", first)
 
+    def test_writes_report_atomically(self):
+        report = Path(self.temporary_directory.name) / "report.md"
+
+        history.write_report(report, "complete\n")
+
+        self.assertEqual(report.read_text(), "complete\n")
+        self.assertEqual(list(report.parent.glob(f".{report.name}.*.tmp")), [])
+
+    def test_failed_report_replace_preserves_existing_report(self):
+        report = Path(self.temporary_directory.name) / "report.md"
+        report.write_text("prior\n")
+
+        with (
+            mock.patch.object(os, "replace", side_effect=OSError("replace failed")),
+            self.assertRaises(OSError),
+        ):
+            history.write_report(report, "replacement\n")
+
+        self.assertEqual(report.read_text(), "prior\n")
+        self.assertEqual(list(report.parent.glob(f".{report.name}.*.tmp")), [])
+
     def test_excludes_local_only_ref_from_inventory_scope(self):
         self.write("private.txt", "not remotely advertised\n")
         self.commit("private history", "2026-08-03T00:00:00Z")
