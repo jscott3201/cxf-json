@@ -19,6 +19,12 @@ from urllib.parse import quote_from_bytes, unquote_to_bytes, urlsplit
 
 TOOL_VERSION = 2
 CANONICAL_REMOTE_URL = "https://github.com/jscott3201/cxf-json.git"
+CANONICAL_GIT_PROGRAMS = {
+    (
+        "9048038886ac36210fbb616b49b0707465f63683cb04e33a2013baf95f746938",
+        "d5aeb8954c72119600d48fc62fdf5bb9295afa85fe6523f70e03828e22b4bee9",
+    ),
+}
 DEFAULT_LARGE_BLOB_BYTES = 1_048_576
 DEFAULT_MAX_SCANNED_OBJECT_BYTES = 4_194_304
 MAX_SECRET_CANDIDATES_PER_OBJECT = 1_000
@@ -261,9 +267,13 @@ class GitRunner:
         except OSError as error:
             raise InventoryError("--git-executable does not exist") from error
         validate_program(executable, "--git-executable")
-        if not re.fullmatch(r"[0-9a-f]{64}", expected_executable_sha256):
+        if not isinstance(expected_executable_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", expected_executable_sha256
+        ):
             raise InventoryError("expected Git executable SHA-256 is invalid")
-        if not re.fullmatch(r"[0-9a-f]{64}", expected_helper_sha256):
+        if not isinstance(expected_helper_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", expected_helper_sha256
+        ):
             raise InventoryError("expected Git HTTPS helper SHA-256 is invalid")
 
         self.executable = str(executable)
@@ -911,6 +921,14 @@ def collect_inventory(
     validate_remote_url(remote_url, allow_noncanonical_remote)
     if git_executable is None:
         raise InventoryError("an absolute Git executable is required")
+    if (
+        remote_url == CANONICAL_REMOTE_URL
+        and (git_executable_sha256, git_https_helper_sha256)
+        not in CANONICAL_GIT_PROGRAMS
+    ):
+        raise InventoryError(
+            "canonical W-025 evidence requires a source-reviewed Git program pair"
+        )
     runner = GitRunner(
         git_executable, git_executable_sha256, git_https_helper_sha256
     )
@@ -1131,6 +1149,13 @@ def collect_inventory_with_runner(
             truncated_secret_scans.append(
                 {"object_id": object_id, "object_kind": "tag", "paths": paths}
             )
+
+    final_local_refs, _ = collect_refs(repository, runner=runner)
+    final_remote_refs = collect_remote_refs(repository, remote_url, runner=runner)
+    if {
+        ref["name"]: ref["object_id"] for ref in final_local_refs
+    } != local_ref_objects or final_remote_refs != remote_refs:
+        raise InventoryError("local or remote refs changed during inventory")
 
     remote_manifest = "".join(
         f"{ref_name}\t{object_id}\n" for ref_name, object_id in sorted(remote_refs.items())

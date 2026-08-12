@@ -602,6 +602,33 @@ class HistoryInventoryTests(unittest.TestCase):
                 self.git_executable, "0" * 64, self.git_https_helper_sha256
             )
 
+    def test_rejects_missing_git_program_digest(self):
+        with self.assertRaisesRegex(history.InventoryError, "SHA-256 is invalid"):
+            history.GitRunner(self.git_executable, None, None)
+
+    def test_canonical_inventory_requires_reviewed_git_programs(self):
+        with self.assertRaisesRegex(history.InventoryError, "source-reviewed"):
+            history.collect_inventory(
+                self.repository,
+                self.final_commit,
+                history.CANONICAL_REMOTE_URL,
+                git_executable=self.git_executable,
+                git_executable_sha256="0" * 64,
+                git_https_helper_sha256="1" * 64,
+            )
+
+    def test_canonical_fixture_mode_still_requires_reviewed_git_programs(self):
+        with self.assertRaisesRegex(history.InventoryError, "source-reviewed"):
+            history.collect_inventory(
+                self.repository,
+                self.final_commit,
+                history.CANONICAL_REMOTE_URL,
+                allow_noncanonical_remote=True,
+                git_executable=self.git_executable,
+                git_executable_sha256="0" * 64,
+                git_https_helper_sha256="1" * 64,
+            )
+
     def test_rejects_relative_git_executable(self):
         with self.assertRaises(history.InventoryError):
             history.GitRunner(
@@ -828,6 +855,25 @@ class HistoryInventoryTests(unittest.TestCase):
                 git_executable_sha256=self.git_executable_sha256,
                 git_https_helper_sha256=self.git_https_helper_sha256,
             )
+
+    def test_rejects_refs_that_change_during_inventory(self):
+        original = history.collect_remote_refs
+        calls = 0
+
+        def changing_refs(repository, remote_url, runner=None):
+            nonlocal calls
+            refs = original(repository, remote_url, runner=runner)
+            calls += 1
+            if calls == 2:
+                refs = dict(refs)
+                refs["refs/heads/changed"] = self.final_commit
+            return refs
+
+        with (
+            mock.patch.object(history, "collect_remote_refs", side_effect=changing_refs),
+            self.assertRaisesRegex(history.InventoryError, "changed during inventory"),
+        ):
+            self.inventory()
 
 
 if __name__ == "__main__":
