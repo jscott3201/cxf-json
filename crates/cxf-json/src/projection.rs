@@ -971,7 +971,7 @@ pub(crate) fn project(document: OrderedDocument) -> Projection {
         collector.nodes.push(document.root());
     } else {
         for member in members {
-            if !member.name.starts_with('@') {
+            if !matches!(&*member.name, "@context" | "@graph" | "@included") {
                 let record = builder.record_extension(
                     None,
                     &member.name,
@@ -1124,7 +1124,24 @@ impl ProjectionBuilder<'_> {
                 // other JSON-LD keyword member — including node-scoped
                 // contexts the projection deliberately does not apply — is
                 // retained verbatim as extension evidence.
-                "@graph" | "@included" => {}
+                "@graph" | "@included" => {
+                    let malformed = match &member.value {
+                        OrderedValue::Object { .. } => false,
+                        OrderedValue::Array { values, .. } => values
+                            .iter()
+                            .any(|item| !matches!(item, OrderedValue::Object { .. })),
+                        _ => true,
+                    };
+                    if malformed {
+                        let record = self.record_extension(
+                            Some(index),
+                            &member.name,
+                            member.value.token().clone(),
+                            value_kind(&member.value),
+                        );
+                        extensions.push(record);
+                    }
+                }
                 "@context" if is_root => {}
                 _ if name.starts_with('@') => {
                     let record = self.record_extension(
@@ -1504,10 +1521,11 @@ impl<'a> NodeCollector<'a> {
             return;
         };
         // Envelopes: recurse into nested graph members. Only a *pure*
-        // structural envelope (nested graph members, no identity, no payload)
-        // is itself uncollected; every other object member becomes a node so
-        // anonymous and payload-bearing content degrades into weakly typed
-        // evidence instead of vanishing.
+        // structural envelope (nested graph members, no identity, no payload
+        // of either keyword or term shape) is itself uncollected; every
+        // other object member becomes a node so anonymous and
+        // payload-bearing content degrades into weakly typed evidence
+        // instead of vanishing.
         let mut has_nested_graph = false;
         for member in members {
             if matches!(&*member.name, "@graph" | "@included") {
@@ -1515,7 +1533,9 @@ impl<'a> NodeCollector<'a> {
                 self.collect_value(&member.value);
             }
         }
-        let has_payload = members.iter().any(|member| !member.name.starts_with('@'));
+        let has_payload = members
+            .iter()
+            .any(|member| !matches!(&*member.name, "@graph" | "@included"));
         if looks_like_node(members) || !has_nested_graph || has_payload {
             self.nodes.push(value);
         }
@@ -2630,5 +2650,93 @@ mod keyword_tests {
             NodeClass::Block(BlockKind::Abstract)
         );
         assert_eq!(codes(&projection).len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod seam_tests {
+    use super::*;
+    use crate::ParseOptions;
+
+    fn project_str(input: &str) -> Projection {
+        let preflight = crate::json::admit_and_preflight(input.as_bytes(), &ParseOptions::new())
+            .expect("test document must pass preflight");
+        let (document, _) = preflight.into_ordered_document();
+        project(document)
+    }
+
+    #[test]
+    fn unconsumed_root_keywords_leave_extension_evidence() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@base": "https://example.test/unused-base/",
+              "junk": 1,
+              "@graph": [ { "@id": "ex:A", "@type": "S231:Block" } ]
+            }"#,
+        );
+        assert_eq!(
+            projection
+                .root_extensions()
+                .iter()
+                .map(ExtensionRecord::predicate)
+                .collect::<Vec<_>>(),
+            ["@base", "junk"]
+        );
+        assert_eq!(projection.metrics().extension_members, 2);
+        assert_eq!(projection.nodes().len(), 1);
+    }
+
+    #[test]
+    fn malformed_graph_member_shapes_leave_extension_evidence() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                {
+                  "@id": "ex:N",
+                  "@type": "S231:Parameter",
+                  "@included": 42
+                },
+                {
+                  "@id": "ex:M",
+                  "@type": "S231:Block",
+                  "@graph": [ 7 ]
+                }
+              ]
+            }"#,
+        );
+        assert_eq!(projection.nodes().len(), 2);
+        for (index, predicate, kind) in [(0, "@included", "number"), (1, "@graph", "array")] {
+            assert_eq!(projection.nodes()[index].extensions().len(), 1);
+            assert_eq!(
+                projection.nodes()[index].extensions()[0].predicate(),
+                predicate
+            );
+            assert_eq!(projection.nodes()[index].extensions()[0].kind(), kind);
+        }
+    }
+
+    #[test]
+    fn envelope_with_keyword_payload_is_collected() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                {
+                  "@graph": [ { "@id": "ex:Inner", "@type": "S231:Block" } ],
+                  "@base": "https://example.test/never-applied/"
+                }
+              ]
+            }"#,
+        );
+        assert_eq!(projection.nodes().len(), 2);
+        let envelope = projection
+            .nodes()
+            .iter()
+            .find(|node| node.id_spelling().is_none())
+            .expect("payload-bearing envelope must be collected");
+        assert_eq!(envelope.class(), NodeClass::WeakUntyped);
+        assert_eq!(envelope.extensions()[0].predicate(), "@base");
     }
 }
