@@ -123,6 +123,20 @@ class HistoryInventoryTests(unittest.TestCase):
         self.assertIn("deleted.txt", report)
         self.assertNotIn("A" * 36, report)
 
+    def test_bounds_candidate_path_fanout(self):
+        paths = {f"path-{index}" for index in range(history.MAX_CANDIDATE_PATHS + 2)}
+
+        candidates, truncated = history.secret_candidates(
+            b"gh" + b"p_" + b"A" * 36,
+            "1" * 40,
+            "blob",
+            paths,
+        )
+
+        self.assertFalse(truncated)
+        self.assertEqual(len(candidates[0]["paths"]), history.MAX_CANDIDATE_PATHS)
+        self.assertEqual(candidates[0]["omitted_path_count"], 2)
+
     def test_redacts_secrets_in_commit_and_tag_subjects(self):
         secret = "password=" + "supersecret"
         self.git("commit", "--allow-empty", "-m", secret)
@@ -165,15 +179,47 @@ class HistoryInventoryTests(unittest.TestCase):
             )
         )
 
-    def test_report_is_deterministic_and_changes_with_ref_set(self):
+    def test_report_is_deterministic(self):
         first = history.render_report(self.inventory(), "inventory command")
         second = history.render_report(self.inventory(), "inventory command")
         self.assertEqual(first, second)
         self.assertIn("Status: INCOMPLETE", first)
 
-        self.git("update-ref", "refs/pull/2/head", self.final_commit)
-        changed = history.render_report(self.inventory(), "inventory command")
-        self.assertNotEqual(first, changed)
+    def test_excludes_local_only_ref_from_inventory_scope(self):
+        self.write("private.txt", "not remotely advertised\n")
+        self.commit("private history", "2026-08-03T00:00:00Z")
+        private_commit = self.rev_parse("HEAD")
+        mirror = Path(self.temporary_directory.name) / "local-only.git"
+        self.git(
+            "clone",
+            "--mirror",
+            str(self.repository),
+            str(mirror),
+            use_repository=False,
+        )
+        self.git("reset", "--hard", self.final_commit)
+        subprocess.run(
+            ["git", "-C", str(mirror), "update-ref", "refs/heads/main", self.final_commit],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(mirror), "update-ref", "refs/private/injected", private_commit],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(mirror), "remote", "set-url", "origin", str(self.repository)],
+            check=True,
+        )
+
+        with self.assertRaises(history.InventoryError):
+            history.collect_inventory(
+                mirror,
+                self.final_commit,
+                str(self.repository),
+                max_scanned_object_bytes=1_024,
+                large_blob_bytes=48,
+                allow_noncanonical_remote=True,
+            )
 
     def test_rejects_unreachable_final_commit(self):
         with self.assertRaises(history.InventoryError):
@@ -234,6 +280,15 @@ class HistoryInventoryTests(unittest.TestCase):
 
         self.assertEqual(inventory["final_commit"], self.final_commit)
 
+    def test_ignores_transport_environment(self):
+        with mock.patch.dict(
+            os.environ,
+            {"HTTPS_PROXY": "http://127.0.0.1:1", "SSL_CERT_FILE": "/missing"},
+        ):
+            inventory = self.inventory()
+
+        self.assertEqual(inventory["final_commit"], self.final_commit)
+
     def test_reports_unsupported_nested_tag(self):
         self.git("tag", "-a", "inner", "-m", "inner")
         self.git("tag", "-a", "outer", "-m", "outer", "inner")
@@ -272,6 +327,129 @@ class HistoryInventoryTests(unittest.TestCase):
         self.assertNotIn("A" * 36, encoded)
         self.assertIn(hashlib.sha256(secret).hexdigest(), encoded)
 
+    def test_escapes_control_characters_in_report_cells(self):
+        self.assertEqual(
+            history.markdown("tab\treturn\rend"), "tab\\\\u0009return\\\\u000dend"
+        )
+
+    def test_rejects_malformed_remote_advertisement(self):
+        with mock.patch.object(history, "git_limited", return_value=b"malformed\n"):
+            with self.assertRaises(history.InventoryError):
+                history.collect_remote_refs(self.repository, str(self.repository))
+
+    def test_rejects_unterminated_remote_advertisement(self):
+        advertisement = f"{'1' * 40}\trefs/heads/main".encode()
+        with (
+            mock.patch.object(history, "git_limited", return_value=advertisement),
+            self.assertRaises(history.InventoryError),
+        ):
+            history.collect_remote_refs(self.repository, str(self.repository))
+
+    def test_rejects_incomplete_commit_enumeration(self):
+        refs = [{"commit": self.final_commit}]
+        with (
+            mock.patch.object(history, "git_limited", return_value=self.final_commit.encode()),
+            self.assertRaises(history.InventoryError),
+        ):
+            history.collect_commits(self.repository, refs)
+
+    def test_rejects_malformed_tree_record(self):
+        with (
+            mock.patch.object(history, "git_limited", return_value=b"malformed\0"),
+            self.assertRaises(history.InventoryError),
+        ):
+            history.tree_entries(self.repository, self.final_commit)
+
+    def test_rejects_unterminated_tree_output(self):
+        output = f"100644 blob {'1' * 40}\tpath".encode()
+        with (
+            mock.patch.object(history, "git_limited", return_value=output),
+            self.assertRaises(history.InventoryError),
+        ):
+            history.tree_entries(self.repository, self.final_commit)
+
+    def test_rejects_unterminated_local_ref_inventory(self):
+        output = f"refs/heads/main\0commit\0{'1' * 40}\0".encode()
+        with (
+            mock.patch.object(history, "git_limited", return_value=output),
+            self.assertRaises(history.InventoryError),
+        ):
+            history.collect_refs(self.repository)
+
+    def test_rejects_git_output_above_limit(self):
+        with self.assertRaises(history.InventoryError):
+            history.git_limited(
+                self.repository,
+                1,
+                "for-each-ref",
+                "--format=%(refname)",
+            )
+
+    def test_rejects_remote_ref_count_above_limit(self):
+        advertisement = (
+            f"{'1' * 40}\trefs/heads/one\n{'2' * 40}\trefs/heads/two\n"
+        ).encode()
+        with (
+            mock.patch.object(history, "MAX_REMOTE_REFS", 1),
+            mock.patch.object(history, "git_limited", return_value=advertisement),
+            self.assertRaises(history.InventoryError),
+        ):
+            history.collect_remote_refs(self.repository, str(self.repository))
+
+    def test_rejects_historical_path_above_limit(self):
+        with (
+            mock.patch.object(history, "MAX_PATH_BYTES", 1),
+            self.assertRaises(history.InventoryError),
+        ):
+            history.tree_entries(self.repository, self.final_commit)
+
+    def test_rejects_aggregate_tree_entries_above_limit(self):
+        with (
+            mock.patch.object(history, "MAX_HISTORICAL_TREE_ENTRIES", 1),
+            self.assertRaises(history.InventoryError),
+        ):
+            self.inventory()
+
+    def test_rejects_aggregate_scanned_bytes_above_limit(self):
+        with (
+            mock.patch.object(history, "MAX_TOTAL_SCANNED_OBJECT_BYTES", 1),
+            self.assertRaises(history.InventoryError),
+        ):
+            self.inventory()
+
+    def test_rejects_aggregate_secret_candidates_above_limit(self):
+        with (
+            mock.patch.object(history, "MAX_TOTAL_SECRET_CANDIDATES", 0),
+            self.assertRaises(history.InventoryError),
+        ):
+            self.inventory()
+
+    def test_sanitizes_git_error_for_logs(self):
+        with (
+            mock.patch.object(
+                history,
+                "git_limited",
+                side_effect=history.InventoryError(
+                    history.redact_secret_text(
+                        history.safe_log_text("password=supersecret\tbad\rremote")
+                    )
+                ),
+            ),
+            self.assertRaises(history.InventoryError) as raised,
+        ):
+            history.git_text(self.repository, "status")
+
+        message = str(raised.exception)
+        self.assertNotIn("supersecret", message)
+        self.assertIn("[REDACTED:assigned-secret]", message)
+        self.assertNotIn("\n", message)
+        self.assertNotIn("\t", message)
+        self.assertNotIn("\r", message)
+
+    def test_preserves_ref_byte_identity(self):
+        self.assertEqual(history.encode_ref(b"refs/heads/\xff"), "refs/heads/%FF")
+        self.assertEqual(history.encode_ref(b"refs/heads/%FF"), "refs/heads/%25FF")
+
     def test_reports_remote_ref_missing_from_local_inventory(self):
         mirror = Path(self.temporary_directory.name) / "mirror.git"
         self.git(
@@ -283,17 +461,13 @@ class HistoryInventoryTests(unittest.TestCase):
         )
         self.git("update-ref", "refs/pull/2/head", self.final_commit)
 
-        inventory = history.collect_inventory(
-            mirror,
-            self.final_commit,
-            str(self.repository),
-            allow_noncanonical_remote=True,
-        )
-
-        self.assertEqual(
-            inventory["coverage_errors"],
-            ["remote ref is missing locally: refs/pull/2/head"],
-        )
+        with self.assertRaises(history.InventoryError):
+            history.collect_inventory(
+                mirror,
+                self.final_commit,
+                str(self.repository),
+                allow_noncanonical_remote=True,
+            )
 
 
 if __name__ == "__main__":

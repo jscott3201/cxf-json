@@ -4,9 +4,12 @@ import html
 import os
 import platform
 import re
+import signal
 import shlex
 import subprocess
 import sys
+import threading
+import unicodedata
 from pathlib import Path
 from urllib.parse import quote_from_bytes, urlsplit
 
@@ -16,8 +19,35 @@ CANONICAL_REMOTE_URL = "https://github.com/jscott3201/cxf-json.git"
 DEFAULT_LARGE_BLOB_BYTES = 1_048_576
 DEFAULT_MAX_SCANNED_OBJECT_BYTES = 4_194_304
 MAX_SECRET_CANDIDATES_PER_OBJECT = 1_000
+MAX_TOTAL_SECRET_CANDIDATES = 10_000
 GIT_TIMEOUT_SECONDS = 120
+MAX_REMOTE_ADVERTISEMENT_BYTES = 8_388_608
+MAX_REMOTE_REFS = 10_000
+MAX_REF_NAME_BYTES = 4_096
+MAX_REACHABLE_COMMITS = 10_000
+MAX_TREE_OUTPUT_BYTES = 33_554_432
+MAX_HISTORICAL_TREE_ENTRIES = 500_000
+MAX_HISTORICAL_PATH_BYTES = 33_554_432
+MAX_PATH_BYTES = 4_096
+MAX_UNIQUE_BLOBS = 100_000
+MAX_TOTAL_SCANNED_OBJECT_BYTES = 268_435_456
+MAX_CANDIDATE_PATHS = 20
+MAX_GIT_TEXT_OUTPUT_BYTES = 4_194_304
 OID_PATTERN = re.compile(r"[0-9a-f]{40}")
+TRANSPORT_ENVIRONMENT = {
+    "ALL_PROXY",
+    "CURL_CA_BUNDLE",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NO_PROXY",
+    "REQUESTS_CA_BUNDLE",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "all_proxy",
+    "https_proxy",
+    "http_proxy",
+    "no_proxy",
+}
 SECRET_PATTERNS = [
     (
         "private-key-header",
@@ -66,11 +96,22 @@ class InventoryError(Exception):
     pass
 
 
+def safe_log_text(value):
+    return "".join(
+        character
+        if not unicodedata.category(character).startswith("C")
+        else f"\\u{ord(character):04x}"
+        for character in str(value)
+    )
+
+
 def git(repository, *arguments, input_data=None, text=True, check=True):
     environment = {
         name: value
         for name, value in os.environ.items()
-        if not name.startswith("GIT_") and name not in {"GCM_INTERACTIVE"}
+        if not name.startswith("GIT_")
+        and name not in TRANSPORT_ENVIRONMENT
+        and name not in {"GCM_INTERACTIVE"}
     }
     environment.update(
         {
@@ -99,12 +140,104 @@ def git(repository, *arguments, input_data=None, text=True, check=True):
     )
 
 
-def git_text(repository, *arguments):
+def git_limited(repository, max_stdout_bytes, *arguments):
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith("GIT_")
+        and name not in TRANSPORT_ENVIRONMENT
+        and name not in {"GCM_INTERACTIVE"}
+    }
+    environment.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_GRAFT_FILE": os.devnull,
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GCM_INTERACTIVE": "never",
+            "LC_ALL": "C",
+        }
+    )
+    process = subprocess.Popen(
+        ["git", "--no-replace-objects", "-C", str(repository), *arguments],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        start_new_session=True,
+    )
+    stdout = bytearray()
+    stderr = bytearray()
+    stdout_exceeded = threading.Event()
+    stderr_exceeded = threading.Event()
+
+    def kill_process_group():
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (PermissionError, ProcessLookupError):
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+
+    def read_stream(stream, destination, limit, overflow):
+        while True:
+            chunk = stream.read(65_536)
+            if not chunk:
+                return
+            remaining = limit - len(destination)
+            if remaining > 0:
+                destination.extend(chunk[:remaining])
+            if len(chunk) > remaining:
+                overflow.set()
+                kill_process_group()
+                return
+
+    assert process.stdout is not None
+    assert process.stderr is not None
+
+    stdout_thread = threading.Thread(
+        target=read_stream,
+        args=(process.stdout, stdout, max_stdout_bytes, stdout_exceeded),
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=read_stream,
+        args=(process.stderr, stderr, 65_536, stderr_exceeded),
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
     try:
-        return git(repository, *arguments).stdout
-    except subprocess.CalledProcessError as error:
-        message = error.stderr.strip() or "Git command failed"
-        raise InventoryError(message) from error
+        return_code = process.wait(timeout=GIT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        kill_process_group()
+        process.wait(timeout=5)
+        raise InventoryError(f"Git command timed out: {' '.join(arguments)}") from error
+    finally:
+        stdout_thread.join(timeout=5)
+        stderr_thread.join(timeout=5)
+        process.stdout.close()
+        process.stderr.close()
+    if stdout_thread.is_alive() or stderr_thread.is_alive():
+        kill_process_group()
+        raise InventoryError("Git output readers did not terminate")
+    if stderr_exceeded.is_set():
+        raise InventoryError("Git command stderr exceeded 65536 bytes")
+    if stdout_exceeded.is_set():
+        raise InventoryError(f"Git command output exceeded {max_stdout_bytes} bytes")
+    if return_code != 0:
+        message = safe_log_text(stderr.decode("utf-8", "backslashreplace")).strip()
+        message = redact_secret_text(message) or "Git command failed"
+        raise InventoryError(message)
+    return bytes(stdout)
+
+
+def git_text(repository, *arguments):
+    return git_limited(
+        repository, MAX_GIT_TEXT_OUTPUT_BYTES, *arguments
+    ).decode("utf-8", "backslashreplace")
 
 
 def parse_tag_object(data):
@@ -134,19 +267,51 @@ def parse_tag_object(data):
     }
 
 
-def collect_refs(repository, max_scanned_object_bytes):
-    output = git_text(
+def collect_refs(repository):
+    output = git_limited(
         repository,
+        MAX_REMOTE_ADVERTISEMENT_BYTES,
         "for-each-ref",
-        "--format=%(refname)%00%(objecttype)%00%(objectname)",
+        "--format=%(refname)%00%(objecttype)%00%(objectname)%00",
     )
+    if output and not output.endswith(b"\0\n"):
+        raise InventoryError("local ref inventory is incomplete")
     refs = []
     errors = []
-    for line in output.splitlines():
-        fields = line.split("\0", 2)
-        if len(fields) != 3:
-            raise InventoryError("malformed local ref inventory")
-        ref_name, object_type, object_id = fields
+    fields = output.replace(b"\0\n", b"\0").split(b"\0")
+    if fields and fields[-1] == b"":
+        fields.pop()
+    if len(fields) % 3 != 0:
+        raise InventoryError("malformed local ref inventory")
+    for index in range(0, len(fields), 3):
+        try:
+            ref_name = encode_ref(fields[index])
+            object_type = fields[index + 1].decode("ascii", "strict")
+            object_id = fields[index + 2].decode("ascii", "strict")
+        except UnicodeDecodeError as error:
+            raise InventoryError("malformed local ref inventory") from error
+        if len(ref_name.encode("utf-8", "backslashreplace")) > MAX_REF_NAME_BYTES:
+            raise InventoryError(f"local ref name exceeds {MAX_REF_NAME_BYTES} bytes")
+        if len(refs) == MAX_REMOTE_REFS:
+            raise InventoryError(f"local ref count exceeds {MAX_REMOTE_REFS}")
+        refs.append(
+            {
+                "name": ref_name,
+                "object_type": object_type,
+                "object_id": object_id,
+            }
+        )
+    return sorted(refs, key=lambda ref: ref["name"]), errors
+
+
+def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget):
+    hydrated = []
+    errors = []
+    for ref in refs:
+        ref = dict(ref)
+        object_type = ref["object_type"]
+        object_id = ref["object_id"]
+        ref_name = ref["name"]
         tag_metadata = None
         tag_size = None
         if object_type == "tag":
@@ -161,6 +326,12 @@ def collect_refs(repository, max_scanned_object_bytes):
                     "subject": "(not scanned)",
                 }
             else:
+                scan_budget["bytes"] += tag_size
+                if scan_budget["bytes"] > MAX_TOTAL_SCANNED_OBJECT_BYTES:
+                    raise InventoryError(
+                        "aggregate scanned object bytes exceed "
+                        f"{MAX_TOTAL_SCANNED_OBJECT_BYTES}"
+                    )
                 tag_data = git(repository, "cat-file", "tag", object_id, text=False).stdout
                 target_type, tag_metadata = parse_tag_object(tag_data)
                 if target_type == "tag":
@@ -179,28 +350,46 @@ def collect_refs(repository, max_scanned_object_bytes):
             commit = None
         if commit is None and not any(error.startswith(ref_name) for error in errors):
             errors.append(f"{ref_name} does not resolve to a commit")
-        refs.append(
+        ref.update(
             {
-                "name": ref_name,
-                "object_type": object_type,
-                "object_id": object_id,
                 "commit": commit,
                 "tag_metadata": tag_metadata,
                 "tag_size": tag_size,
             }
         )
-    return sorted(refs, key=lambda ref: ref["name"]), errors
+        hydrated.append(ref)
+    return hydrated, errors
 
 
 def collect_remote_refs(repository, remote_url):
-    output = git_text(repository, "ls-remote", "--refs", remote_url)
+    output = git_limited(
+        repository,
+        MAX_REMOTE_ADVERTISEMENT_BYTES,
+        "ls-remote",
+        "--refs",
+        remote_url,
+    )
+    if output and not output.endswith(b"\n"):
+        raise InventoryError("remote ref advertisement is incomplete")
     refs = {}
     for line in output.splitlines():
-        object_id, ref_name = line.split("\t", 1)
-        if not OID_PATTERN.fullmatch(object_id) or not ref_name.startswith("refs/"):
-            raise InventoryError(f"malformed remote ref advertisement: {line}")
+        fields = line.split(b"\t", 1)
+        if len(fields) != 2:
+            raise InventoryError("malformed remote ref advertisement")
+        object_id_bytes, ref_name_bytes = fields
+        try:
+            object_id = object_id_bytes.decode("ascii", "strict")
+        except UnicodeDecodeError as error:
+            raise InventoryError("malformed remote ref advertisement") from error
+        if not OID_PATTERN.fullmatch(object_id) or not ref_name_bytes.startswith(b"refs/"):
+            raise InventoryError("malformed remote ref advertisement")
+        if len(ref_name_bytes) > MAX_REF_NAME_BYTES:
+            raise InventoryError(f"remote ref name exceeds {MAX_REF_NAME_BYTES} bytes")
+        ref_name = encode_ref(ref_name_bytes)
         if ref_name in refs:
             raise InventoryError(f"duplicate remote ref advertisement: {ref_name}")
+        if len(refs) == MAX_REMOTE_REFS:
+            raise InventoryError(f"remote ref count exceeds {MAX_REMOTE_REFS}")
         refs[ref_name] = object_id
     if not refs:
         raise InventoryError("the remote advertised no refs")
@@ -250,21 +439,30 @@ def validate_repository(repository, remote_url):
         raise InventoryError("history inventory currently requires Git SHA-1 object IDs")
     if git_text(repository, "rev-parse", "--is-shallow-repository").strip() != "false":
         raise InventoryError("shallow repositories cannot establish complete history")
-    origin = git(repository, "remote", "get-url", "origin", check=False)
-    if origin.returncode != 0 or origin.stdout.strip() != remote_url:
-        raise InventoryError("the repository origin must exactly match --remote-url")
-    transport_overrides = git(
+    transport_overrides = git_limited(
         repository,
+        MAX_GIT_TEXT_OUTPUT_BYTES,
         "config",
         "--local",
-        "--get-regexp",
-        r"^(url\..*\.insteadof|http\..*|credential\..*|remote\..*\.proxy|core\.gitproxy)$",
-        check=False,
+        "--null",
+        "--name-only",
+        "--list",
     )
-    if transport_overrides.returncode not in (0, 1):
-        raise InventoryError("failed to inspect repository-local transport overrides")
-    if transport_overrides.stdout.strip():
+    override_pattern = re.compile(
+        rb"^(include(if)?\..*|url\..*\.insteadof|http\..*|credential\..*|remote\..*\.proxy|core\.gitproxy)$"
+    )
+    if any(
+        override_pattern.fullmatch(name)
+        for name in transport_overrides.split(b"\0")
+        if name
+    ):
         raise InventoryError("repository-local transport overrides are not allowed")
+    try:
+        origin = git_text(repository, "remote", "get-url", "origin").strip()
+    except InventoryError as error:
+        raise InventoryError("failed to resolve repository origin") from error
+    if origin != remote_url:
+        raise InventoryError("the repository origin must exactly match --remote-url")
     return {"git_version": version_output, "object_format": object_format}
 
 
@@ -272,10 +470,17 @@ def collect_commits(repository, refs):
     tips = sorted({ref["commit"] for ref in refs if ref["commit"] is not None})
     if not tips:
         raise InventoryError("the repository contains no refs that resolve to commits")
-    commits = git_text(repository, "rev-list", *tips).splitlines()
+    output_limit = (MAX_REACHABLE_COMMITS + 1) * 41
+    output = git_limited(repository, output_limit, "rev-list", *tips)
+    if not output.endswith(b"\n"):
+        raise InventoryError("reachable commit enumeration is incomplete")
+    commits = output.decode("ascii").splitlines()
     if not commits or any(not OID_PATTERN.fullmatch(commit) for commit in commits):
         raise InventoryError("reachable commit enumeration failed")
-    return sorted(set(commits))
+    commits = sorted(set(commits))
+    if len(commits) > MAX_REACHABLE_COMMITS:
+        raise InventoryError(f"reachable commit count exceeds {MAX_REACHABLE_COMMITS}")
+    return commits
 
 
 def commit_metadata(repository, commit):
@@ -309,22 +514,42 @@ def encode_path(path):
     return encoded
 
 
+def encode_ref(ref_name):
+    return quote_from_bytes(ref_name, safe="/._-")
+
+
 def tree_entries(repository, commit):
-    output = git(
+    output = git_limited(
         repository,
+        MAX_TREE_OUTPUT_BYTES,
         "ls-tree",
         "-r",
         "-z",
         "--full-tree",
         commit,
-        text=False,
-    ).stdout
+    )
+    if output and not output.endswith(b"\0"):
+        raise InventoryError("historical tree output is incomplete")
     entries = []
+    path_bytes = 0
     for record in output.split(b"\0"):
         if not record:
             continue
+        if b"\t" not in record:
+            raise InventoryError("malformed historical tree record")
         metadata, path = record.split(b"\t", 1)
-        mode, object_type, object_id = metadata.decode("ascii").split(" ")
+        if len(path) > MAX_PATH_BYTES:
+            raise InventoryError(f"historical path exceeds {MAX_PATH_BYTES} bytes")
+        path_bytes += len(path)
+        try:
+            metadata_fields = metadata.decode("ascii", "strict").split(" ")
+        except UnicodeDecodeError as error:
+            raise InventoryError("malformed historical tree metadata") from error
+        if len(metadata_fields) != 3:
+            raise InventoryError("malformed historical tree metadata")
+        mode, object_type, object_id = metadata_fields
+        if not OID_PATTERN.fullmatch(object_id):
+            raise InventoryError("malformed historical tree object ID")
         entries.append(
             {
                 "mode": mode,
@@ -333,7 +558,16 @@ def tree_entries(repository, commit):
                 "path": encode_path(path),
             }
         )
-    return entries
+    return entries, path_bytes
+
+
+def safe_text(value):
+    return "".join(
+        character
+        if character == "\n" or not unicodedata.category(character).startswith("C")
+        else f"\\u{ord(character):04x}"
+        for character in str(value)
+    )
 
 
 def secret_candidates(data, object_id, object_kind, paths):
@@ -347,6 +581,9 @@ def secret_candidates(data, object_id, object_kind, paths):
             matches.append((match.start(), name))
         if truncated:
             break
+    sorted_paths = sorted(paths)
+    candidate_paths = sorted_paths[:MAX_CANDIDATE_PATHS]
+    omitted_path_count = len(sorted_paths) - len(candidate_paths)
     candidates = []
     line = 1
     previous_offset = 0
@@ -358,7 +595,8 @@ def secret_candidates(data, object_id, object_kind, paths):
                 "pattern": name,
                 "object_id": object_id,
                 "object_kind": object_kind,
-                "paths": sorted(paths),
+                "paths": candidate_paths,
+                "omitted_path_count": omitted_path_count,
                 "line": line,
             }
         )
@@ -414,7 +652,8 @@ def collect_inventory(
     validate_remote_url(remote_url, allow_noncanonical_remote)
     repository_identity = validate_repository(repository, remote_url)
 
-    refs, coverage_errors = collect_refs(repository, max_scanned_object_bytes)
+    scan_budget = {"bytes": 0}
+    refs, coverage_errors = collect_refs(repository)
     if not refs:
         raise InventoryError("the repository contains no commit refs")
     remote_refs = collect_remote_refs(repository, remote_url)
@@ -424,6 +663,14 @@ def collect_inventory(
             coverage_errors.append(f"remote ref is missing locally: {ref_name}")
         elif local_ref_objects[ref_name] != object_id:
             coverage_errors.append(f"remote ref differs locally: {ref_name}")
+    for ref_name in sorted(set(local_ref_objects) - set(remote_refs)):
+        coverage_errors.append(f"local ref is not advertised remotely: {ref_name}")
+    if coverage_errors:
+        raise InventoryError("local refs do not exactly match the remote advertisement")
+    refs, ref_errors = hydrate_refs(
+        repository, refs, max_scanned_object_bytes, scan_budget
+    )
+    coverage_errors.extend(ref_errors)
 
     commits = collect_commits(repository, refs)
     if final_commit not in commits:
@@ -457,13 +704,32 @@ def collect_inventory(
                 }
             )
         else:
+            scan_budget["bytes"] += size
+            if scan_budget["bytes"] > MAX_TOTAL_SCANNED_OBJECT_BYTES:
+                raise InventoryError(
+                    "aggregate scanned object bytes exceed "
+                    f"{MAX_TOTAL_SCANNED_OBJECT_BYTES}"
+                )
             metadata.append(commit_metadata(repository, commit))
 
     blob_paths = {}
     submodules = set()
     final_paths = set()
+    historical_tree_entries = 0
+    historical_path_bytes = 0
     for commit in commits:
-        for entry in tree_entries(repository, commit):
+        entries, path_bytes = tree_entries(repository, commit)
+        historical_tree_entries += len(entries)
+        historical_path_bytes += path_bytes
+        if historical_tree_entries > MAX_HISTORICAL_TREE_ENTRIES:
+            raise InventoryError(
+                f"historical tree entry count exceeds {MAX_HISTORICAL_TREE_ENTRIES}"
+            )
+        if historical_path_bytes > MAX_HISTORICAL_PATH_BYTES:
+            raise InventoryError(
+                f"historical path bytes exceed {MAX_HISTORICAL_PATH_BYTES}"
+            )
+        for entry in entries:
             if commit == final_commit:
                 final_paths.add(entry["path"])
             if entry["type"] == "blob":
@@ -474,17 +740,30 @@ def collect_inventory(
     blobs = []
     candidates = []
     truncated_secret_scans = []
+    total_scanned_object_bytes = scan_budget["bytes"]
+    if len(blob_paths) > MAX_UNIQUE_BLOBS:
+        raise InventoryError(f"unique blob count exceeds {MAX_UNIQUE_BLOBS}")
     for object_id, paths in sorted(blob_paths.items()):
         size = int(git_text(repository, "cat-file", "-s", object_id).strip())
         scanned = size <= max_scanned_object_bytes
         binary = None
         if scanned:
+            total_scanned_object_bytes += size
+            if total_scanned_object_bytes > MAX_TOTAL_SCANNED_OBJECT_BYTES:
+                raise InventoryError(
+                    "aggregate scanned object bytes exceed "
+                    f"{MAX_TOTAL_SCANNED_OBJECT_BYTES}"
+                )
             data = git(repository, "cat-file", "blob", object_id, text=False).stdout
             if len(data) != size:
                 raise InventoryError(f"short read for blob {object_id}")
             binary = is_binary(data)
             found, truncated = secret_candidates(data, object_id, "blob", paths)
             candidates.extend(found)
+            if len(candidates) > MAX_TOTAL_SECRET_CANDIDATES:
+                raise InventoryError(
+                    f"secret candidate count exceeds {MAX_TOTAL_SECRET_CANDIDATES}"
+                )
             if truncated:
                 truncated_secret_scans.append(
                     {"object_id": object_id, "object_kind": "blob", "paths": sorted(paths)}
@@ -509,6 +788,10 @@ def collect_inventory(
         data = git(repository, "cat-file", "commit", commit, text=False).stdout
         found, truncated = secret_candidates(data, commit, "commit", paths)
         candidates.extend(found)
+        if len(candidates) > MAX_TOTAL_SECRET_CANDIDATES:
+            raise InventoryError(
+                f"secret candidate count exceeds {MAX_TOTAL_SECRET_CANDIDATES}"
+            )
         if truncated:
             truncated_secret_scans.append(
                 {"object_id": commit, "object_kind": "commit", "paths": paths}
@@ -532,6 +815,10 @@ def collect_inventory(
         data = git(repository, "cat-file", "tag", object_id, text=False).stdout
         found, truncated = secret_candidates(data, object_id, "tag", paths)
         candidates.extend(found)
+        if len(candidates) > MAX_TOTAL_SECRET_CANDIDATES:
+            raise InventoryError(
+                f"secret candidate count exceeds {MAX_TOTAL_SECRET_CANDIDATES}"
+            )
         if truncated:
             truncated_secret_scans.append(
                 {"object_id": object_id, "object_kind": "tag", "paths": paths}
@@ -551,12 +838,17 @@ def collect_inventory(
         "object_format": repository_identity["object_format"],
         "repository": str(repository),
         "remote_url": remote_url,
-        "canonical_remote_verified": remote_url == CANONICAL_REMOTE_URL,
+        "canonical_remote_verified": (
+            remote_url == CANONICAL_REMOTE_URL and not coverage_errors
+        ),
         "remote_manifest_sha256": hashlib.sha256(remote_manifest.encode()).hexdigest(),
         "remote_refs": remote_refs,
         "refs": refs,
         "coverage_errors": sorted(set(coverage_errors)),
         "machine_scan_complete": machine_scan_complete,
+        "historical_tree_entries": historical_tree_entries,
+        "historical_path_bytes": historical_path_bytes,
+        "total_scanned_object_bytes": total_scanned_object_bytes,
         "commits": metadata,
         "final_commit": final_commit,
         "blobs": blobs,
@@ -590,7 +882,7 @@ def collect_inventory(
 
 
 def markdown(value):
-    value = html.escape(redact_secret_text(value), quote=False)
+    value = html.escape(redact_secret_text(safe_text(value)), quote=False)
     return value.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
 
 
@@ -655,6 +947,9 @@ def render_report(inventory, invocation):
         f"- Unique reachable commits: {len(commits)}",
         f"- Unique reachable blobs: {len(blobs)}",
         f"- Unique reachable blob bytes: {sum(blob['size'] for blob in blobs)}",
+        f"- Historical tree entries visited: {inventory['historical_tree_entries']}",
+        f"- Historical path bytes visited: {inventory['historical_path_bytes']}",
+        f"- Total scanned Git object bytes: {inventory['total_scanned_object_bytes']}",
         f"- Content scan cap: {inventory['max_scanned_object_bytes']} bytes per Git object",
         f"- Large-blob review threshold: {inventory['large_blob_bytes']} bytes",
         f"- Machine content scan complete: {'yes' if inventory['machine_scan_complete'] else 'no'}",
@@ -771,7 +1066,7 @@ def render_report(inventory, invocation):
     if secret_candidates_found:
         table(
             lines,
-            ["Pattern", "Object kind", "Object", "Line", "Paths"],
+            ["Pattern", "Object kind", "Object", "Line", "Paths", "Omitted paths"],
             [
                 (
                     candidate["pattern"],
@@ -779,6 +1074,7 @@ def render_report(inventory, invocation):
                     candidate["object_id"],
                     candidate["line"],
                     ", ".join(candidate["paths"]),
+                    candidate["omitted_path_count"],
                 )
                 for candidate in secret_candidates_found
             ],
