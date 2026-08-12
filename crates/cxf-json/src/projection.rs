@@ -971,7 +971,9 @@ pub(crate) fn project(document: OrderedDocument) -> Projection {
         collector.nodes.push(document.root());
     } else {
         for member in members {
-            if !matches!(&*member.name, "@context" | "@graph" | "@included") {
+            if !matches!(&*member.name, "@context" | "@graph" | "@included")
+                || structural_member_malformed(&member.value)
+            {
                 let record = builder.record_extension(
                     None,
                     &member.name,
@@ -1125,14 +1127,7 @@ impl ProjectionBuilder<'_> {
                 // contexts the projection deliberately does not apply — is
                 // retained verbatim as extension evidence.
                 "@graph" | "@included" => {
-                    let malformed = match &member.value {
-                        OrderedValue::Object { .. } => false,
-                        OrderedValue::Array { values, .. } => values
-                            .iter()
-                            .any(|item| !matches!(item, OrderedValue::Object { .. })),
-                        _ => true,
-                    };
-                    if malformed {
+                    if structural_member_malformed(&member.value) {
                         let record = self.record_extension(
                             Some(index),
                             &member.name,
@@ -1533,12 +1528,27 @@ impl<'a> NodeCollector<'a> {
                 self.collect_value(&member.value);
             }
         }
-        let has_payload = members
-            .iter()
-            .any(|member| !matches!(&*member.name, "@graph" | "@included"));
+        let has_payload = members.iter().any(|member| {
+            !matches!(&*member.name, "@graph" | "@included")
+                || structural_member_malformed(&member.value)
+        });
         if looks_like_node(members) || !has_nested_graph || has_payload {
             self.nodes.push(value);
         }
+    }
+}
+
+/// A `@graph`/`@included` member is consumed structurally only when it has
+/// node-carrying shape: an object, or an array containing only objects.
+/// Anything else is malformed structural content that must leave extension
+/// evidence instead of being silently skipped.
+fn structural_member_malformed(value: &OrderedValue) -> bool {
+    match value {
+        OrderedValue::Object { .. } => false,
+        OrderedValue::Array { values, .. } => values
+            .iter()
+            .any(|item| !matches!(item, OrderedValue::Object { .. })),
+        _ => true,
     }
 }
 
@@ -2738,5 +2748,81 @@ mod seam_tests {
             .expect("payload-bearing envelope must be collected");
         assert_eq!(envelope.class(), NodeClass::WeakUntyped);
         assert_eq!(envelope.extensions()[0].predicate(), "@base");
+    }
+}
+
+#[cfg(test)]
+mod residual_seam_tests {
+    use super::*;
+    use crate::ParseOptions;
+
+    fn project_str(input: &str) -> Projection {
+        let preflight = crate::json::admit_and_preflight(input.as_bytes(), &ParseOptions::new())
+            .expect("test document must pass preflight");
+        let (document, _) = preflight.into_ordered_document();
+        project(document)
+    }
+
+    #[test]
+    fn malformed_structural_member_on_plain_root_leaves_evidence() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@included": 42
+            }"#,
+        );
+        assert!(projection.nodes().is_empty());
+        assert_eq!(projection.root_extensions().len(), 1);
+        assert_eq!(projection.root_extensions()[0].predicate(), "@included");
+        assert_eq!(projection.root_extensions()[0].kind(), "number");
+    }
+
+    #[test]
+    fn envelope_with_malformed_structural_member_is_collected() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [ { "@graph": 7 } ]
+            }"#,
+        );
+        assert_eq!(projection.nodes().len(), 1);
+        let envelope = &projection.nodes()[0];
+        assert_eq!(envelope.class(), NodeClass::WeakUntyped);
+        assert_eq!(envelope.extensions().len(), 1);
+        assert_eq!(envelope.extensions()[0].predicate(), "@graph");
+    }
+
+    #[test]
+    fn anonymous_named_graph_context_is_evidence_not_gating() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                {
+                  "@context": { "S231P": "http://data.ashrae.org/S231P#" },
+                  "@graph": [ { "@id": "ex:Inner", "S231P:value": 1 } ]
+                }
+              ]
+            }"#,
+        );
+        assert_eq!(projection.nodes().len(), 2);
+        let envelope = projection
+            .nodes()
+            .iter()
+            .find(|node| node.id_spelling().is_none())
+            .expect("anonymous envelope must be collected");
+        assert_eq!(envelope.class(), NodeClass::WeakUntyped);
+        assert_eq!(envelope.extensions()[0].predicate(), "@context");
+        let inner = projection
+            .nodes()
+            .iter()
+            .find(|node| node.id_spelling() == Some("ex:Inner"))
+            .expect("inner node must exist");
+        assert_eq!(inner.class(), NodeClass::WeakUntyped);
+        assert_eq!(
+            inner.extensions()[0].predicate(),
+            "S231P:value",
+            "a node-scoped context must not register its prefix"
+        );
     }
 }
