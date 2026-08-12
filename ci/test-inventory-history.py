@@ -151,7 +151,7 @@ class HistoryInventoryTests(unittest.TestCase):
             {"blob", "commit", "tag"},
         )
         self.assertNotIn(secret, report)
-        self.assertIn("[REDACTED:assigned-secret]", report)
+        self.assertIn("\\[REDACTED:assigned-secret\\]", report)
 
     def test_classifies_binary_large_generated_and_unscanned_blobs(self):
         inventory = history.collect_inventory(
@@ -353,6 +353,13 @@ class HistoryInventoryTests(unittest.TestCase):
             history.markdown("tab\treturn\rend"), "tab\\\\u0009return\\\\u000dend"
         )
 
+    def test_escapes_markdown_links_and_images(self):
+        rendered = history.markdown("![remote](https://example.test/pixel)")
+
+        self.assertEqual(
+            rendered, "\\!\\[remote\\]\\(https://example.test/pixel\\)"
+        )
+
     def test_rejects_malformed_remote_advertisement(self):
         with mock.patch.object(history, "git_limited", return_value=b"malformed\n"):
             with self.assertRaises(history.InventoryError):
@@ -405,6 +412,16 @@ class HistoryInventoryTests(unittest.TestCase):
                 "for-each-ref",
                 "--format=%(refname)",
             )
+
+    def test_rejects_non_posix_platform_before_spawn(self):
+        with (
+            mock.patch.object(history.os, "name", "nt"),
+            mock.patch.object(history.subprocess, "Popen") as popen,
+            self.assertRaises(history.InventoryError),
+        ):
+            history.git_limited(self.repository, 1, "status")
+
+        popen.assert_not_called()
 
     def test_rejects_remote_ref_count_above_limit(self):
         advertisement = (

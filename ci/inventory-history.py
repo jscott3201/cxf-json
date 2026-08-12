@@ -4,7 +4,6 @@ import html
 import os
 import platform
 import re
-import signal
 import shlex
 import subprocess
 import sys
@@ -142,6 +141,8 @@ def git(repository, *arguments, input_data=None, text=True, check=True):
 
 
 def git_limited(repository, max_stdout_bytes, *arguments):
+    if os.name != "posix":
+        raise InventoryError("history inventory requires POSIX process-group controls")
     environment = {
         name: value
         for name, value in os.environ.items()
@@ -172,10 +173,11 @@ def git_limited(repository, max_stdout_bytes, *arguments):
     stderr = bytearray()
     stdout_exceeded = threading.Event()
     stderr_exceeded = threading.Event()
+    reader_errors = []
 
     def kill_process_group():
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process.pid, 9)
         except (PermissionError, ProcessLookupError):
             try:
                 process.kill()
@@ -183,17 +185,21 @@ def git_limited(repository, max_stdout_bytes, *arguments):
                 pass
 
     def read_stream(stream, destination, limit, overflow):
-        while True:
-            chunk = stream.read(65_536)
-            if not chunk:
-                return
-            remaining = limit - len(destination)
-            if remaining > 0:
-                destination.extend(chunk[:remaining])
-            if len(chunk) > remaining:
-                overflow.set()
-                kill_process_group()
-                return
+        try:
+            while True:
+                chunk = stream.read(65_536)
+                if not chunk:
+                    return
+                remaining = limit - len(destination)
+                if remaining > 0:
+                    destination.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    overflow.set()
+                    kill_process_group()
+                    return
+        except (OSError, ValueError) as error:
+            reader_errors.append(error)
+            kill_process_group()
 
     assert process.stdout is not None
     assert process.stderr is not None
@@ -219,11 +225,13 @@ def git_limited(repository, max_stdout_bytes, *arguments):
     finally:
         stdout_thread.join(timeout=5)
         stderr_thread.join(timeout=5)
-        process.stdout.close()
-        process.stderr.close()
     if stdout_thread.is_alive() or stderr_thread.is_alive():
         kill_process_group()
         raise InventoryError("Git output readers did not terminate")
+    process.stdout.close()
+    process.stderr.close()
+    if reader_errors:
+        raise InventoryError("Git output reader failed") from reader_errors[0]
     if stderr_exceeded.is_set():
         raise InventoryError("Git command stderr exceeded 65536 bytes")
     if stdout_exceeded.is_set():
@@ -884,7 +892,16 @@ def collect_inventory(
 
 def markdown(value):
     value = html.escape(redact_secret_text(safe_text(value)), quote=False)
-    return value.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+    return (
+        value.replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("!", "\\!")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace("(", "\\(")
+        .replace(")", "\\)")
+        .replace("\n", " ")
+    )
 
 
 def inline_code(value):
@@ -943,6 +960,7 @@ def render_report(inventory, invocation):
         f"- Canonical W-025 remote verified: {'yes' if inventory['canonical_remote_verified'] else 'no'}",
         f"- Remote manifest SHA-256: {inline_code(inventory['remote_manifest_sha256'])}",
         f"- Git object format: {inline_code(inventory['object_format'])}",
+        f"- Platform: {inline_code(sys.platform)} (POSIX required)",
         f"- Remote refs advertised: {len(remote_refs)}",
         f"- Local refs inventoried: {len(refs)}",
         f"- Unique reachable commits: {len(commits)}",
