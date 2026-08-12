@@ -211,8 +211,10 @@ def run_limited_process(command, environment, max_stdout_bytes, input_data=None)
     if return_code is None:
         raise InventoryError("Git command did not report an exit status")
     if return_code != 0:
-        message = safe_log_text(stderr.decode("utf-8", "backslashreplace")).strip()
-        message = redact_secret_text(message) or "Git command failed"
+        message = redact_secret_text(
+            stderr.decode("utf-8", "backslashreplace")
+        ).strip()
+        message = safe_log_text(message) or "Git command failed"
         raise InventoryError(message)
     return bytes(stdout)
 
@@ -250,7 +252,7 @@ def validate_program(path, name):
 
 
 class GitRunner:
-    def __init__(self, executable):
+    def __init__(self, executable, expected_executable_sha256, expected_helper_sha256):
         executable = Path(executable)
         if not executable.is_absolute():
             raise InventoryError("--git-executable must be an absolute path")
@@ -259,50 +261,63 @@ class GitRunner:
         except OSError as error:
             raise InventoryError("--git-executable does not exist") from error
         validate_program(executable, "--git-executable")
-
-        environment = git_environment()
-        output = run_limited_process(
-            [str(executable), "--exec-path"], environment, MAX_PATH_BYTES
-        )
-        try:
-            exec_path = Path(output.decode("utf-8", "strict").strip())
-        except UnicodeDecodeError as error:
-            raise InventoryError("git --exec-path returned invalid UTF-8") from error
-        if not exec_path.is_absolute() or not exec_path.is_dir():
-            raise InventoryError("git --exec-path did not return an absolute directory")
-        installation_root = Path(os.path.commonpath([executable, exec_path]))
-        if installation_root == Path(installation_root.anchor):
-            raise InventoryError(
-                "Git executable and helper directory must share an installation root"
-            )
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_executable_sha256):
+            raise InventoryError("expected Git executable SHA-256 is invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_helper_sha256):
+            raise InventoryError("expected Git HTTPS helper SHA-256 is invalid")
 
         self.executable = str(executable)
-        self.exec_path = str(exec_path.resolve())
-        helper = Path(self.exec_path, "git-remote-https")
-        try:
-            helper = helper.resolve(strict=True)
-            helper.relative_to(self.exec_path)
-        except (OSError, ValueError) as error:
-            raise InventoryError(
-                "Git HTTPS helper must resolve inside the helper directory"
-            ) from error
-        validate_program(helper, "Git HTTPS helper")
-        self.https_helper = str(helper)
         snapshot_path = Path(tempfile.mkdtemp(prefix="cxf-json-git-"))
         self.snapshot_path = snapshot_path
         snapshot_executable = snapshot_path / "git"
         snapshot_https_helper = snapshot_path / "git-remote-https"
         try:
-            for source, destination in (
-                (executable, snapshot_executable),
-                (helper, snapshot_https_helper),
-            ):
-                shutil.copyfile(source, destination)
-                destination.chmod(0o500)
+            shutil.copyfile(executable, snapshot_executable)
+            snapshot_executable.chmod(0o500)
+            self.executable_sha256 = program_sha256(snapshot_executable)
+            if self.executable_sha256 != expected_executable_sha256:
+                raise InventoryError(
+                    "Git executable snapshot does not match the expected SHA-256"
+                )
+            environment = git_environment()
+            output = run_limited_process(
+                [str(snapshot_executable), "--exec-path"],
+                environment,
+                MAX_PATH_BYTES,
+            )
+            try:
+                exec_path = Path(output.decode("utf-8", "strict").strip())
+            except UnicodeDecodeError as error:
+                raise InventoryError("git --exec-path returned invalid UTF-8") from error
+            if not exec_path.is_absolute() or not exec_path.is_dir():
+                raise InventoryError(
+                    "git --exec-path did not return an absolute directory"
+                )
+            installation_root = Path(os.path.commonpath([executable, exec_path]))
+            if installation_root == Path(installation_root.anchor):
+                raise InventoryError(
+                    "Git executable and helper directory must share an installation root"
+                )
+            self.exec_path = str(exec_path.resolve())
+            helper = Path(self.exec_path, "git-remote-https")
+            try:
+                helper = helper.resolve(strict=True)
+                helper.relative_to(self.exec_path)
+            except (OSError, ValueError) as error:
+                raise InventoryError(
+                    "Git HTTPS helper must resolve inside the helper directory"
+                ) from error
+            validate_program(helper, "Git HTTPS helper")
+            self.https_helper = str(helper)
+            shutil.copyfile(helper, snapshot_https_helper)
+            snapshot_https_helper.chmod(0o500)
+            self.https_helper_sha256 = program_sha256(snapshot_https_helper)
+            if self.https_helper_sha256 != expected_helper_sha256:
+                raise InventoryError(
+                    "Git HTTPS helper snapshot does not match the expected SHA-256"
+                )
             (snapshot_path / "git-upload-pack").symlink_to("git")
             snapshot_path.chmod(0o500)
-            self.executable_sha256 = program_sha256(snapshot_executable)
-            self.https_helper_sha256 = program_sha256(snapshot_https_helper)
         except (OSError, InventoryError):
             snapshot_path.chmod(0o700)
             shutil.rmtree(snapshot_path, ignore_errors=True)
@@ -886,6 +901,8 @@ def collect_inventory(
     large_blob_bytes=DEFAULT_LARGE_BLOB_BYTES,
     allow_noncanonical_remote=False,
     git_executable=None,
+    git_executable_sha256=None,
+    git_https_helper_sha256=None,
 ):
     repository = Path(repository).resolve()
     tool_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
@@ -894,7 +911,9 @@ def collect_inventory(
     validate_remote_url(remote_url, allow_noncanonical_remote)
     if git_executable is None:
         raise InventoryError("an absolute Git executable is required")
-    runner = GitRunner(git_executable)
+    runner = GitRunner(
+        git_executable, git_executable_sha256, git_https_helper_sha256
+    )
     try:
         return collect_inventory_with_runner(
             repository,
@@ -1183,7 +1202,7 @@ def collect_inventory_with_runner(
 
 
 def markdown(value):
-    value = html.escape(redact_secret_text(safe_text(value)), quote=False)
+    value = html.escape(safe_text(redact_secret_text(value)), quote=False)
     return (
         value.replace("\\", "\\\\")
         .replace("://", ":\\/\\/")
@@ -1204,7 +1223,7 @@ def markdown(value):
 
 
 def inline_code(value):
-    value = redact_secret_text(safe_text(value)).replace("\n", " ")
+    value = safe_text(redact_secret_text(value)).replace("\n", " ")
     longest_run = max((len(run) for run in re.findall(r"`+", value)), default=0)
     delimiter = "`" * (longest_run + 1)
     padding = (
@@ -1369,7 +1388,7 @@ def render_report(inventory, invocation):
         lines,
         [
             "Path (percent-encoded bytes)",
-            "Blob versions",
+            "Blob objects",
             "Largest bytes",
             "Binary",
             "Generated candidate",
@@ -1377,7 +1396,9 @@ def render_report(inventory, invocation):
         [
             (
                 item["record"]["display"],
-                len(item["versions"]),
+                ", ".join(
+                    sorted(blob["object_id"] for blob in item["versions"])
+                ),
                 max(blob["size"] for blob in item["versions"]),
                 binary_label(item["versions"]),
                 "yes"
@@ -1596,6 +1617,8 @@ def parse_args(arguments):
     )
     parser.add_argument("--repository", default=".")
     parser.add_argument("--git-executable", required=True)
+    parser.add_argument("--git-executable-sha256", required=True)
+    parser.add_argument("--git-https-helper-sha256", required=True)
     parser.add_argument("--remote-url", required=True)
     parser.add_argument("--final-commit", required=True)
     parser.add_argument("--report", required=True)
@@ -1624,6 +1647,8 @@ def main(arguments=None):
             parsed.max_scanned_object_bytes,
             parsed.large_blob_bytes,
             git_executable=parsed.git_executable,
+            git_executable_sha256=parsed.git_executable_sha256,
+            git_https_helper_sha256=parsed.git_https_helper_sha256,
         )
         invocation = shlex.join(
             [
@@ -1633,6 +1658,10 @@ def main(arguments=None):
                 "<isolated-mirror>",
                 "--git-executable",
                 parsed.git_executable,
+                "--git-executable-sha256",
+                parsed.git_executable_sha256,
+                "--git-https-helper-sha256",
+                parsed.git_https_helper_sha256,
                 "--remote-url",
                 parsed.remote_url,
                 "--final-commit",

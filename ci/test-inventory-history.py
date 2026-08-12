@@ -26,7 +26,19 @@ class HistoryInventoryTests(unittest.TestCase):
         if git_executable is None:
             self.fail("git executable was not found")
         self.git_executable = str(Path(git_executable).resolve())
-        self.runner = history.GitRunner(self.git_executable)
+        self.git_executable_sha256 = history.program_sha256(Path(self.git_executable))
+        environment = history.git_environment()
+        exec_path = history.run_limited_process(
+            [self.git_executable, "--exec-path"], environment, history.MAX_PATH_BYTES
+        ).decode().strip()
+        self.git_https_helper_sha256 = history.program_sha256(
+            Path(exec_path, "git-remote-https").resolve()
+        )
+        self.runner = history.GitRunner(
+            self.git_executable,
+            self.git_executable_sha256,
+            self.git_https_helper_sha256,
+        )
         self.addCleanup(self.runner.close)
         self.repository = Path(self.temporary_directory.name) / "repository"
         self.git("init", "-b", "main", str(self.repository), use_repository=False)
@@ -103,6 +115,8 @@ class HistoryInventoryTests(unittest.TestCase):
             large_blob_bytes=48,
             allow_noncanonical_remote=True,
             git_executable=self.git_executable,
+            git_executable_sha256=self.git_executable_sha256,
+            git_https_helper_sha256=self.git_https_helper_sha256,
         )
 
     def test_inventories_refs_deleted_blobs_and_author_metadata(self):
@@ -166,6 +180,16 @@ class HistoryInventoryTests(unittest.TestCase):
         self.assertNotIn(secret, report)
         self.assertIn("\\[REDACTED:assigned-secret\\]", report)
 
+    def test_redacts_secret_with_control_whitespace_before_escaping(self):
+        secret = "supersecret"
+        self.git("commit", "--allow-empty", "-m", f"password=\t{secret}")
+        self.final_commit = self.rev_parse("HEAD")
+
+        report = history.render_report(self.inventory(), "inventory command")
+
+        self.assertNotIn(secret, report)
+        self.assertIn("\\[REDACTED:assigned-secret\\]", report)
+
     def test_classifies_binary_large_generated_and_unscanned_blobs(self):
         inventory = history.collect_inventory(
             self.repository,
@@ -175,6 +199,8 @@ class HistoryInventoryTests(unittest.TestCase):
             large_blob_bytes=48,
             allow_noncanonical_remote=True,
             git_executable=self.git_executable,
+            git_executable_sha256=self.git_executable_sha256,
+            git_https_helper_sha256=self.git_https_helper_sha256,
         )
         blobs = {
             path["display"]: blob
@@ -200,6 +226,13 @@ class HistoryInventoryTests(unittest.TestCase):
         second = history.render_report(self.inventory(), "inventory command")
         self.assertEqual(first, second)
         self.assertIn("Status: INCOMPLETE", first)
+
+    def test_report_lists_every_blob_object_id(self):
+        inventory = self.inventory()
+        report = history.render_report(inventory, "inventory command")
+
+        for blob in inventory["blobs"]:
+            self.assertIn(blob["object_id"], report)
 
     def test_writes_report_atomically(self):
         report = Path(self.temporary_directory.name) / "report.md"
@@ -320,6 +353,8 @@ class HistoryInventoryTests(unittest.TestCase):
                 large_blob_bytes=48,
                 allow_noncanonical_remote=True,
                 git_executable=self.git_executable,
+                git_executable_sha256=self.git_executable_sha256,
+                git_https_helper_sha256=self.git_https_helper_sha256,
             )
 
     def test_rejects_unreachable_final_commit(self):
@@ -330,6 +365,8 @@ class HistoryInventoryTests(unittest.TestCase):
                 str(self.repository),
                 allow_noncanonical_remote=True,
                 git_executable=self.git_executable,
+                git_executable_sha256=self.git_executable_sha256,
+                git_https_helper_sha256=self.git_https_helper_sha256,
             )
 
     def test_rejects_credential_bearing_remote_url(self):
@@ -339,6 +376,8 @@ class HistoryInventoryTests(unittest.TestCase):
                 self.final_commit,
                 "https://token@example.test/repository.git",
                 git_executable=self.git_executable,
+                git_executable_sha256=self.git_executable_sha256,
+                git_https_helper_sha256=self.git_https_helper_sha256,
             )
 
     def test_rejects_configured_remote_name(self):
@@ -348,6 +387,8 @@ class HistoryInventoryTests(unittest.TestCase):
                 self.final_commit,
                 "origin",
                 git_executable=self.git_executable,
+                git_executable_sha256=self.git_executable_sha256,
+                git_https_helper_sha256=self.git_https_helper_sha256,
             )
 
     def test_rejects_shallow_repository(self):
@@ -368,6 +409,8 @@ class HistoryInventoryTests(unittest.TestCase):
                 str(self.repository),
                 allow_noncanonical_remote=True,
                 git_executable=self.git_executable,
+                git_executable_sha256=self.git_executable_sha256,
+                git_https_helper_sha256=self.git_https_helper_sha256,
             )
 
     def test_rejects_repository_local_url_rewrites(self):
@@ -535,7 +578,11 @@ class HistoryInventoryTests(unittest.TestCase):
         self.assertTrue(output.startswith(b"git version "))
 
     def test_pinned_git_runner_rejects_snapshot_mutation(self):
-        runner = history.GitRunner(self.git_executable)
+        runner = history.GitRunner(
+            self.git_executable,
+            self.git_executable_sha256,
+            self.git_https_helper_sha256,
+        )
         executable = Path(runner.command)
         original = executable.read_bytes()
         try:
@@ -549,9 +596,17 @@ class HistoryInventoryTests(unittest.TestCase):
                 executable.chmod(0o500)
                 runner.close()
 
+    def test_rejects_unexpected_git_program_digest(self):
+        with self.assertRaisesRegex(history.InventoryError, "does not match"):
+            history.GitRunner(
+                self.git_executable, "0" * 64, self.git_https_helper_sha256
+            )
+
     def test_rejects_relative_git_executable(self):
         with self.assertRaises(history.InventoryError):
-            history.GitRunner("git")
+            history.GitRunner(
+                "git", self.git_executable_sha256, self.git_https_helper_sha256
+            )
 
     def test_object_reads_use_the_bounded_runner(self):
         object_id = self.git("hash-object", "src.txt").stdout.strip()
@@ -770,6 +825,8 @@ class HistoryInventoryTests(unittest.TestCase):
                 str(self.repository),
                 allow_noncanonical_remote=True,
                 git_executable=self.git_executable,
+                git_executable_sha256=self.git_executable_sha256,
+                git_https_helper_sha256=self.git_https_helper_sha256,
             )
 
 
