@@ -30,7 +30,6 @@ impl OrderedDocument {
         self.source
     }
 
-    #[cfg(test)]
     pub(crate) const fn root(&self) -> &OrderedValue {
         &self.root
     }

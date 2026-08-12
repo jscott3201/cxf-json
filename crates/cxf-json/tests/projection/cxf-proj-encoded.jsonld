@@ -1,0 +1,19 @@
+{
+  "@context": {
+    "S231P": "http://data.ashrae.org/S231P#",
+    "ex": "https://example.test/cxf#"
+  },
+  "@graph": [
+    {
+      "@id": "ex:MultiIn.u",
+      "@type": "S231P:RealInput",
+      "S231P:isConnectedTo": { "@id": "ex:MultiIn.mulMax.u%5B1%5D" }
+    },
+    {
+      "@id": "ex:MultiIn.mulMax.u%5B1%5D",
+      "@type": "S231P:RealInput",
+      "S231P:label": "mulMax.u[1]",
+      "S231P:isOfDataType": { "@id": "S231P:Real" }
+    }
+  ]
+}

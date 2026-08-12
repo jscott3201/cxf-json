@@ -1,0 +1,22 @@
+{
+  "@context": {
+    "S231P": "http://data.ashrae.org/S231P#",
+    "ex": "https://example.test/cxf#"
+  },
+  "@graph": [
+    {
+      "@id": "ex:Scaling.gain",
+      "@type": "S231P:Parameter",
+      "S231P:isOfDataType": { "@id": "S231P:Real" },
+      "S231P:label": "gain",
+      "S231P:value": "{ terms: [Array] }"
+    },
+    {
+      "@id": "ex:Scaling.offset",
+      "@type": "S231P:Parameter",
+      "S231P:isOfDataType": { "@id": "S231P:Real" },
+      "S231P:label": "offset",
+      "S231P:value": "yMin - uMin * gain + offset"
+    }
+  ]
+}

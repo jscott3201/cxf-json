@@ -1,0 +1,74 @@
+{
+  "@context": {
+    "S231": "http://data.ashrae.org/S231#",
+    "@base": "https://example.test/cxf-specform/"
+  },
+  "@graph": [
+    {
+      "@id": "ExamplePackage",
+      "@type": "S231:Package",
+      "S231:translationSoftware": "cxf-json projection tests",
+      "S231:translationSoftwareVersion": "0.0.0",
+      "S231:containsBlock": { "@id": "ExamplePackage.ExampleSeq" }
+    },
+    {
+      "@id": "ExamplePackage.ExampleSeq",
+      "@type": "S231:CompositeBlock",
+      "S231:label": "ExampleSeq",
+      "S231:hasInstance": [
+        { "@id": "ExamplePackage.ExampleSeq#gain" },
+        { "@id": "ExamplePackage.ExampleSeq#ext" }
+      ],
+      "S231:hasInput": { "@id": "ExamplePackage.ExampleSeq#u" },
+      "S231:hasOutput": { "@id": "ExamplePackage.ExampleSeq#y" }
+    },
+    {
+      "@id": "ExamplePackage.ExampleSeq#gain",
+      "@type": "CDL.Reals.MultiplyByParameter",
+      "S231:label": "gain",
+      "S231:hasInstance": [
+        { "@id": "ExamplePackage.ExampleSeq#gain.k" },
+        { "@id": "ExamplePackage.ExampleSeq#gain.u" },
+        { "@id": "ExamplePackage.ExampleSeq#gain.y" }
+      ]
+    },
+    {
+      "@id": "ExamplePackage.ExampleSeq#gain.k",
+      "@type": "S231:Parameter",
+      "S231:isOfDataType": { "@id": "S231:Real" },
+      "S231:value": "100000"
+    },
+    {
+      "@id": "ExamplePackage.ExampleSeq#gain.u",
+      "@type": "S231:RealInput",
+      "S231:isOfDataType": { "@id": "S231:Real" }
+    },
+    {
+      "@id": "ExamplePackage.ExampleSeq#gain.y",
+      "@type": "S231:RealOutput",
+      "S231:isOfDataType": { "@id": "S231:Real" },
+      "S231:connectedTo": { "@id": "ExamplePackage.ExampleSeq#y" }
+    },
+    {
+      "@id": "ExamplePackage.ExampleSeq#ext",
+      "@type": "S231:ExtensionBlock",
+      "S231:hasFmuPath": "./fmu/heatExchange.fmu"
+    },
+    {
+      "@id": "ExamplePackage.ExampleSeq#u",
+      "@type": "S231:RealInput",
+      "S231:isOfDataType": { "@id": "S231:Real" },
+      "S231:connectedTo": { "@id": "ExamplePackage.ExampleSeq#gain.u" }
+    },
+    {
+      "@id": "ExamplePackage.ExampleSeq#y",
+      "@type": "S231:RealOutput",
+      "S231:isOfDataType": { "@id": "S231:Real" }
+    },
+    {
+      "@id": "ExamplePackage.ExampleSeq#cst",
+      "@type": "S231:Constant",
+      "S231:value": true
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "@graph": [
+    {
+      "@id": "https://example.test/cxf#Loop.u",
+      "@type": "https://data.ashrae.org/S231P#RealInput",
+      "https://data.ashrae.org/S231P#isOfDataType": {
+        "@id": "https://data.ashrae.org/S231P#Real"
+      },
+      "https://data.ashrae.org/S231P#isConnectedTo": {
+        "@id": "https://example.test/cxf#Loop.y"
+      }
+    },
+    {
+      "@id": "https://example.test/cxf#Loop.y",
+      "@type": "https://data.ashrae.org/S231P#RealOutput",
+      "https://data.ashrae.org/S231P#isOfDataType": {
+        "@id": "https://data.ashrae.org/S231P#Real"
+      }
+    }
+  ]
+}

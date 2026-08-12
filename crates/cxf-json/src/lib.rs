@@ -3,7 +3,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 //! Owned contract foundations for CXF JSON.
 //!
-//! Normal builds do not expose a supported CXF parser. Profile 0.1.3 defines
+//! Normal builds do not expose a supported CXF parser. Profile 0.1.4 defines
 //! input-byte, structural JSON, and private RDF output options plus source,
 //! location, diagnostic, and error types without exposing JSON-LD, RDF, Serde, or
 //! host-runtime values. Explicit project instrumentation builds also expose a
@@ -15,6 +15,8 @@ mod contract;
 mod json;
 #[allow(dead_code)]
 mod ordered;
+#[allow(dead_code)]
+mod projection;
 #[cfg(feature = "semantic-ingestion")]
 #[allow(dead_code)]
 mod semantic;
