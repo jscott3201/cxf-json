@@ -8,8 +8,11 @@
 //! joins and no JSON-LD context expansion: compacted vocabulary spellings are
 //! recognized only when the document's own `@context` maps a registered
 //! prefix to its registered namespace IRI, and distinct IRIs keep distinct
-//! internal identity (register rows C-001, C-002, C-016). All behavior here
-//! remains crate-private; profile 0.1.3 public exports are unchanged.
+//! internal identity (register rows C-001, C-002, C-016). Embedded
+//! reference-object members beyond their first string `@id` and unhandled
+//! keyword shapes are retained verbatim as extension records rather than
+//! silently dropped. All behavior here remains crate-private; profile 0.1.3
+//! public exports are unchanged.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -665,6 +668,12 @@ pub(crate) struct ConnectorClass {
 }
 
 /// Node classification derived from registered `@type` spellings.
+///
+/// `NodeClass` is a *derived structural grouping* (like `EdgeKind`), not a
+/// term identity: vocabulary generation and spelling identity stay intact in
+/// `type_spellings`, and every predicate/property retains its full `TermId`.
+/// Compatible assertions merge to the most specific class; incompatible
+/// assertions diagnose and keep the first-authored class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NodeClass {
     Package,
@@ -877,6 +886,11 @@ pub(crate) struct ProjectionMetrics {
 }
 
 /// Complete private projection of one CXF document.
+///
+/// The projection owns the admitted source document so every retained token
+/// range, extension record, and opaque value stays resolvable for the
+/// projection's lifetime (D-014: exact spelling lives only in the retained
+/// submitted bytes).
 #[derive(Debug)]
 pub(crate) struct Projection {
     nodes: Vec<NodeProjection>,
@@ -884,6 +898,7 @@ pub(crate) struct Projection {
     diagnostics: Vec<ProjectionDiagnostic>,
     root_extensions: Vec<ExtensionRecord>,
     metrics: ProjectionMetrics,
+    source_document: Option<crate::SourceDocument>,
 }
 
 impl Projection {
@@ -906,10 +921,23 @@ impl Projection {
     pub(crate) const fn metrics(&self) -> ProjectionMetrics {
         self.metrics
     }
+
+    /// The admitted source document retained with this projection.
+    pub(crate) fn source_document(&self) -> &crate::SourceDocument {
+        self.source_document
+            .as_ref()
+            .expect("projection retains its source document")
+    }
+
+    /// Decodes the exact submitted spelling of a retained token range.
+    #[cfg(test)]
+    pub(crate) fn source_slice(&self, token: &Range<usize>) -> Option<&str> {
+        std::str::from_utf8(self.source_document().as_bytes().get(token.clone())?).ok()
+    }
 }
 
 /// Projects the ordered source view into the private typed CXF record.
-pub(crate) fn project(document: &OrderedDocument) -> Projection {
+pub(crate) fn project(document: OrderedDocument) -> Projection {
     let mut builder = ProjectionBuilder {
         source: document.source_document().as_bytes(),
         ..ProjectionBuilder::default()
@@ -922,15 +950,19 @@ pub(crate) fn project(document: &OrderedDocument) -> Projection {
             document.root().token().clone(),
             None,
         );
-        return builder.finish();
+        let mut projection = builder.finish();
+        projection.source_document = Some(document.into_source_document());
+        return projection;
     };
 
     builder.context = activate_context(members);
 
     let mut collector = NodeCollector::default();
     collector.collect_from_members(members);
-    let root_is_node = !collector.graph_seen && looks_like_node(members);
-    if root_is_node {
+    // An identity-bearing root is a node even when it also carries `@graph`
+    // (named-graph envelope with identity); otherwise its non-keyword
+    // members degrade into root-level extension records.
+    if looks_like_node(members) {
         collector.nodes.push(document.root());
     } else {
         for member in members {
@@ -954,7 +986,9 @@ pub(crate) fn project(document: &OrderedDocument) -> Projection {
     }
 
     builder.resolve_edges();
-    builder.finish()
+    let mut projection = builder.finish();
+    projection.source_document = Some(document.into_source_document());
+    projection
 }
 
 struct ProjectionBuilder<'a> {
@@ -1006,6 +1040,7 @@ impl ProjectionBuilder<'_> {
             diagnostics: self.diagnostics,
             root_extensions: self.root_extensions,
             metrics,
+            source_document: None,
         }
     }
 
@@ -1050,16 +1085,33 @@ impl ProjectionBuilder<'_> {
         for member in members {
             let name: &str = &member.name;
             match name {
-                "@id" => {
-                    if let OrderedValue::String { value, .. } = &member.value {
+                "@id" => match (&member.value, id_spelling.is_none()) {
+                    (OrderedValue::String { value, .. }, true) => {
                         id_spelling = Some(value.clone());
                     }
+                    // A non-string or duplicate `@id` cannot supply identity;
+                    // the member stays as verbatim extension evidence.
+                    _ => {
+                        let record = self.record_extension(
+                            Some(index),
+                            &member.name,
+                            member.value.token().clone(),
+                            value_kind(&member.value),
+                        );
+                        extensions.push(record);
+                    }
+                },
+                "@type" => {
+                    self.parse_type_member(
+                        index,
+                        &member.value,
+                        &mut type_spellings,
+                        &mut extensions,
+                    );
                 }
-                "@type" => collect_type_spellings(&member.value, &mut type_spellings),
                 _ if name.starts_with('@') => {}
                 _ => match lookup(name, &self.context) {
                     Some(term_id) => {
-                        self.recognized_members += 1;
                         let term = term_id.term();
                         if term == Term::Graphics || !term.is_link() {
                             self.parse_literal(
@@ -1071,6 +1123,7 @@ impl ProjectionBuilder<'_> {
                                 &mut extensions,
                             );
                         } else {
+                            let edge_count = self.edges.len();
                             self.parse_link_value(
                                 term_id,
                                 index,
@@ -1078,6 +1131,9 @@ impl ProjectionBuilder<'_> {
                                 &member.value,
                                 &mut extensions,
                             );
+                            if self.edges.len() > edge_count {
+                                self.recognized_members += 1;
+                            }
                         }
                     }
                     None => {
@@ -1201,7 +1257,12 @@ impl ProjectionBuilder<'_> {
         let OrderedValue::Object { members, token } = value else {
             return;
         };
-        let spelling = members.iter().find_map(|member| {
+        // The first string `@id` supplies the reference target. Every other
+        // member (including a second `@id` or embedded authored content) is
+        // retained verbatim as extension evidence; embedded reference-object
+        // content does not itself become a node in C1. When no usable `@id`
+        // exists at all, the whole malformed member is recorded once instead.
+        let spelling: Option<Arc<str>> = members.iter().find_map(|member| {
             if &*member.name == "@id"
                 && let OrderedValue::String { value, .. } = &member.value
             {
@@ -1213,6 +1274,23 @@ impl ProjectionBuilder<'_> {
             self.malformed_reference(subject, member_name, value, extensions);
             return;
         };
+        let mut target_seen = false;
+        for member in members {
+            if &*member.name == "@id"
+                && !target_seen
+                && matches!(&member.value, OrderedValue::String { value, .. } if value == &spelling)
+            {
+                target_seen = true;
+                continue;
+            }
+            let record = self.record_extension(
+                Some(subject),
+                &member.name,
+                member.value.token().clone(),
+                value_kind(&member.value),
+            );
+            extensions.push(record);
+        }
         let term = predicate.term();
         let data_type = if term == Term::IsOfDataType {
             resolve_data_type(&spelling, &self.context)
@@ -1258,7 +1336,7 @@ impl ProjectionBuilder<'_> {
             ExpectedPayload::Opaque => {
                 let opaque = opaque_value(value);
                 if let Some(text) = opaque_artifact_text(&opaque)
-                    && text.trim() == EMITTER_VALUE_ARTIFACT
+                    && text == EMITTER_VALUE_ARTIFACT
                 {
                     self.diagnostic(
                         ProjectionCode::ValueArtifact,
@@ -1272,11 +1350,14 @@ impl ProjectionBuilder<'_> {
             ExpectedPayload::ExtensionOnly => Err(()),
         };
         match payload {
-            Ok(payload) => properties.push(NodeProperty {
-                term: term_id,
-                payload,
-                token: value.token().clone(),
-            }),
+            Ok(payload) => {
+                self.recognized_members += 1;
+                properties.push(NodeProperty {
+                    term: term_id,
+                    payload,
+                    token: value.token().clone(),
+                });
+            }
             Err(()) => {
                 let record = self.record_extension(
                     Some(node),
@@ -1292,13 +1373,12 @@ impl ProjectionBuilder<'_> {
     fn resolve_edges(&mut self) {
         let mut unresolved: Vec<(usize, Arc<str>, Range<usize>)> = Vec::new();
         for edge in &mut self.edges {
-            // A datatype reference names a vocabulary term, not a graph node,
-            // so it is never resolved against the document index.
-            if edge.kind() == EdgeKind::DataType {
-                continue;
-            }
             let target = self.id_index.get(&edge.target_spelling).copied();
-            if target.is_none() {
+            // A datatype reference usually names a vocabulary term rather
+            // than a graph node; absence from the index is then normal, and
+            // presence (for example an in-document enumeration definition)
+            // resolves like any other edge.
+            if target.is_none() && edge.kind() != EdgeKind::DataType {
                 unresolved.push((
                     edge.subject,
                     edge.target_spelling.clone(),
@@ -1312,7 +1392,11 @@ impl ProjectionBuilder<'_> {
             if let Some(target) = edge.target {
                 self.nodes[target].inbound.push(edge_index);
             }
-            if edge.kind() == EdgeKind::DataType && self.nodes[edge.subject].data_type.is_none() {
+            // The verbatim *first* well-formed `isOfDataType` spelling wins,
+            // whether or not it registers as a primitive datatype.
+            if edge.kind() == EdgeKind::DataType
+                && self.nodes[edge.subject].data_type_spelling.is_none()
+            {
                 self.nodes[edge.subject].data_type_spelling = Some(edge.target_spelling.clone());
                 self.nodes[edge.subject].data_type = edge.data_type;
             }
@@ -1396,14 +1480,18 @@ impl<'a> NodeCollector<'a> {
         let OrderedValue::Object { members, .. } = value else {
             return;
         };
-        // Named-graph envelopes: recurse into nested `@graph` members. The
-        // envelope object itself is also collected when it carries identity.
+        // Named-graph envelopes: recurse into nested `@graph` members. A pure
+        // envelope without identity is not itself a node; every other object
+        // member is collected even without identity so its content degrades
+        // into weakly typed evidence instead of vanishing.
+        let mut has_nested_graph = false;
         for member in members {
             if &*member.name == "@graph" {
+                has_nested_graph = true;
                 self.collect_value(&member.value);
             }
         }
-        if looks_like_node(members) {
+        if looks_like_node(members) || !has_nested_graph {
             self.nodes.push(value);
         }
     }
@@ -1415,29 +1503,86 @@ fn looks_like_node(members: &[OrderedMember]) -> bool {
         .any(|member| &*member.name == "@id" || &*member.name == "@type")
 }
 
-fn collect_type_spellings(value: &OrderedValue, spellings: &mut Vec<Arc<str>>) {
-    match value {
-        OrderedValue::String { value, .. } => spellings.push(value.clone()),
-        OrderedValue::Array { values, .. } => {
-            for value in values {
-                collect_type_spellings(value, spellings);
+impl ProjectionBuilder<'_> {
+    /// Collects authored `@type` spellings: plain strings, arrays, and the
+    /// JSON-LD object form `{ "@id": "..." }`. Usable object-form spellings
+    /// are salvaged; every other shape stays as verbatim extension evidence
+    /// instead of silently dropping or masquerading as a missing type.
+    fn parse_type_member(
+        &mut self,
+        node: usize,
+        value: &OrderedValue,
+        spellings: &mut Vec<Arc<str>>,
+        extensions: &mut Vec<ExtensionRecord>,
+    ) {
+        match value {
+            OrderedValue::String { value, .. } => spellings.push(value.clone()),
+            OrderedValue::Array { values, .. } => {
+                for item in values {
+                    self.parse_type_member(node, item, spellings, extensions);
+                }
+            }
+            OrderedValue::Object { members, .. } => {
+                let mut salvaged = false;
+                for member in members {
+                    if !salvaged
+                        && &*member.name == "@id"
+                        && let OrderedValue::String { value, .. } = &member.value
+                    {
+                        spellings.push(value.clone());
+                        salvaged = true;
+                        continue;
+                    }
+                    let record = self.record_extension(
+                        Some(node),
+                        &member.name,
+                        member.value.token().clone(),
+                        value_kind(&member.value),
+                    );
+                    extensions.push(record);
+                }
+            }
+            _ => {
+                let name: Arc<str> = Arc::from("@type");
+                let record = self.record_extension(
+                    Some(node),
+                    &name,
+                    value.token().clone(),
+                    value_kind(value),
+                );
+                extensions.push(record);
             }
         }
-        _ => {}
     }
 }
 
 fn classify_node(type_spellings: &[Arc<str>], context: &ActiveContext) -> (NodeClass, bool) {
-    let registered: Vec<NodeClass> = type_spellings
-        .iter()
-        .filter_map(|spelling| lookup(spelling, context))
-        .filter_map(|term_id| classify_type(term_id.term()))
-        .collect();
-    match registered.split_first() {
-        Some((class, rest)) => {
-            let conflicting = rest.iter().any(|other| other != class);
-            (*class, conflicting)
-        }
+    let mut best: Option<NodeClass> = None;
+    let mut conflicting = false;
+    for spelling in type_spellings {
+        let Some(class) =
+            lookup(spelling, context).and_then(|term_id| classify_type(term_id.term()))
+        else {
+            continue;
+        };
+        best = Some(match best {
+            None => class,
+            Some(current) if current == class => current,
+            // Subclass-compatible assertions merge to the more specific
+            // registered class (for example `Block` + `CompositeBlock`,
+            // `InputConnector` + `RealInput`); genuinely incompatible
+            // assertions keep the first-authored class and diagnose.
+            Some(current) => match merge_classes(current, class) {
+                Some(merged) => merged,
+                None => {
+                    conflicting = true;
+                    current
+                }
+            },
+        });
+    }
+    match best {
+        Some(class) => (class, conflicting),
         None => {
             if type_spellings.is_empty() {
                 (NodeClass::WeakUntyped, false)
@@ -1446,6 +1591,51 @@ fn classify_node(type_spellings: &[Arc<str>], context: &ActiveContext) -> (NodeC
             }
         }
     }
+}
+
+fn class_family_rank(class: NodeClass) -> (u8, u8) {
+    match class {
+        NodeClass::Package => (0, 0),
+        NodeClass::Block(BlockKind::Abstract) => (1, 0),
+        NodeClass::Block(_) => (1, 1),
+        NodeClass::Connector(ConnectorClass {
+            is_input: true,
+            data_type: None,
+        }) => (2, 0),
+        NodeClass::Connector(ConnectorClass {
+            is_input: true,
+            data_type: Some(_),
+        }) => (2, 1),
+        NodeClass::Connector(ConnectorClass {
+            is_input: false,
+            data_type: None,
+        }) => (3, 0),
+        NodeClass::Connector(ConnectorClass {
+            is_input: false,
+            data_type: Some(_),
+        }) => (3, 1),
+        NodeClass::Parameter => (4, 0),
+        NodeClass::Constant => (5, 0),
+        NodeClass::EnumerationType => (6, 0),
+        NodeClass::DataType => (7, 0),
+        NodeClass::Text => (8, 0),
+        NodeClass::LibraryInstance | NodeClass::WeakUntyped => {
+            unreachable!("derived classes never come from registered types")
+        }
+    }
+}
+
+fn merge_classes(first: NodeClass, second: NodeClass) -> Option<NodeClass> {
+    let (family, first_rank) = class_family_rank(first);
+    let (second_family, second_rank) = class_family_rank(second);
+    if family != second_family || first_rank == second_rank {
+        return None;
+    }
+    Some(if first_rank > second_rank {
+        first
+    } else {
+        second
+    })
 }
 
 fn value_kind(value: &OrderedValue) -> &'static str {
@@ -1468,7 +1658,7 @@ mod tests {
         let preflight = crate::json::admit_and_preflight(input.as_bytes(), &ParseOptions::new())
             .expect("test document must pass preflight");
         let (document, _) = preflight.into_ordered_document();
-        project(&document)
+        project(document)
     }
 
     macro_rules! project_fixture {
@@ -1691,6 +1881,21 @@ mod tests {
         // the outer connector land on the nested port.
         assert_eq!(inner_u.inbound().len(), 2);
         assert_eq!(outer_u.outbound().len(), 2); // isOfDataType + isConnectedTo
+
+        let metrics = projection.metrics();
+        assert_eq!(metrics.nodes, 9);
+        assert_eq!(metrics.edges, 13);
+        assert_eq!(metrics.resolved_edges, 9);
+        assert_eq!(metrics.recognized_members, 22);
+        assert_eq!(metrics.extension_members, 1);
+        assert_eq!(metrics.diagnostics, 3);
+        assert_eq!(
+            projection.source_document().as_bytes(),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/projection/cxf-proj-emitter.jsonld"
+            ))
+        );
     }
 
     #[test]
@@ -2009,5 +2214,265 @@ mod tests {
         );
         assert!(projection.root_extensions().is_empty());
         assert_eq!(codes(&projection), Vec::<ProjectionCode>::new());
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    use crate::ParseOptions;
+
+    fn project_str(input: &str) -> Projection {
+        let preflight = crate::json::admit_and_preflight(input.as_bytes(), &ParseOptions::new())
+            .expect("test document must pass preflight");
+        let (document, _) = preflight.into_ordered_document();
+        project(document)
+    }
+
+    fn codes(projection: &Projection) -> Vec<ProjectionCode> {
+        projection
+            .diagnostics()
+            .iter()
+            .map(ProjectionDiagnostic::code)
+            .collect()
+    }
+
+    #[test]
+    fn embedded_reference_members_are_retained_as_extensions() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#", "ex": "https://example.test/cxf#" },
+              "@graph": [
+                {
+                  "@id": "ex:P",
+                  "@type": "S231:Block",
+                  "S231:hasInstance": { "@id": "ex:P.c", "S231:label": "embedded label", "@type": "S231:CompositeBlock" }
+                },
+                { "@id": "ex:P.c", "@type": "S231:CompositeBlock" }
+              ]
+            }"#,
+        );
+        let parent = &projection.nodes()[0];
+        assert_eq!(
+            parent
+                .extensions()
+                .iter()
+                .map(ExtensionRecord::predicate)
+                .collect::<Vec<_>>(),
+            ["S231:label", "@type"]
+        );
+        let edge = parent
+            .outbound()
+            .iter()
+            .map(|index| &projection.edges()[*index])
+            .find(|edge| edge.kind() == EdgeKind::Containment)
+            .expect("containment edge must exist");
+        assert!(edge.target().is_some());
+    }
+
+    #[test]
+    fn anonymous_graph_objects_project_as_weak_nodes() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231P": "http://data.ashrae.org/S231P#" },
+              "@graph": [
+                { "S231P:value": 5, "S231P:label": "lo" }
+              ]
+            }"#,
+        );
+        assert_eq!(projection.nodes().len(), 1);
+        let node = &projection.nodes()[0];
+        assert_eq!(node.class(), NodeClass::WeakUntyped);
+        assert_eq!(node.text(Term::Label), Some("lo"));
+        assert!(matches!(
+            node.value(),
+            Some(OpaqueValue::Literal {
+                kind: LiteralKind::Number,
+                ..
+            })
+        ));
+        assert_eq!(codes(&projection), vec![ProjectionCode::WeaklyTypedNode]);
+    }
+
+    #[test]
+    fn root_named_graph_envelope_keeps_its_identity() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@id": "ex:Doc",
+              "@type": "S231:Package",
+              "@graph": [
+                { "@id": "ex:Block", "@type": "S231:Block", "S231:containsBlock": { "@id": "ex:Doc" } }
+              ]
+            }"#,
+        );
+        assert_eq!(projection.nodes().len(), 2);
+        assert_eq!(projection.nodes()[1].class(), NodeClass::Package);
+        assert_eq!(projection.nodes()[1].id_spelling(), Some("ex:Doc"));
+        let edge = projection
+            .edges()
+            .iter()
+            .find(|edge| edge.kind() == EdgeKind::Containment)
+            .expect("containment edge must exist");
+        assert_eq!(edge.target(), Some(1));
+        assert!(projection.root_extensions().is_empty());
+    }
+
+    #[test]
+    fn datatype_reference_resolves_in_document_targets() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231P": "http://data.ashrae.org/S231P#", "ex": "https://example.test/cxf#" },
+              "@graph": [
+                { "@id": "ex:Types.Stage", "@type": "S231P:EnumerationType", "S231P:label": "Stage" },
+                {
+                  "@id": "ex:Ctl.stage",
+                  "@type": "S231P:Parameter",
+                  "S231P:isOfDataType": { "@id": "ex:Types.Stage" }
+                }
+              ]
+            }"#,
+        );
+        let parameter = &projection.nodes()[1];
+        assert_eq!(parameter.data_type_spelling(), Some("ex:Types.Stage"));
+        assert_eq!(parameter.data_type(), None);
+        let edge = &projection.edges()[parameter.outbound()[0]];
+        assert_eq!(edge.target(), Some(0));
+        assert!(projection.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn first_authored_datatype_spelling_wins() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                {
+                  "@id": "ex:P",
+                  "@type": "S231:Parameter",
+                  "S231:isOfDataType": [ { "@id": "S231:Custom" }, { "@id": "S231:Real" } ]
+                }
+              ]
+            }"#,
+        );
+        let node = &projection.nodes()[0];
+        assert_eq!(node.data_type_spelling(), Some("S231:Custom"));
+        assert_eq!(node.data_type(), None);
+        assert!(
+            projection
+                .diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.code() != ProjectionCode::UnresolvedReference)
+        );
+    }
+
+    #[test]
+    fn object_form_type_spelling_registers() {
+        let projection = project_str(
+            r#"{
+              "@graph": [
+                { "@id": "ex:Q", "@type": { "@id": "http://data.ashrae.org/S231P#Parameter" } }
+              ]
+            }"#,
+        );
+        assert_eq!(projection.nodes()[0].class(), NodeClass::Parameter);
+        assert_eq!(
+            projection.nodes()[0].type_spellings(),
+            &[Arc::from("http://data.ashrae.org/S231P#Parameter")]
+        );
+        assert!(projection.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn nonstring_id_keeps_verbatim_evidence() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                { "@id": 7, "@type": "S231:Parameter" }
+              ]
+            }"#,
+        );
+        let node = &projection.nodes()[0];
+        assert_eq!(node.class(), NodeClass::Parameter);
+        assert_eq!(node.id_form(), &IdentifierForm::Missing);
+        assert_eq!(node.extensions().len(), 1);
+        assert_eq!(node.extensions()[0].predicate(), "@id");
+        assert_eq!(node.extensions()[0].kind(), "number");
+        assert!(projection.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn artifact_matching_is_exact() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231P": "http://data.ashrae.org/S231P#" },
+              "@graph": [
+                { "@id": "ex:A", "@type": "S231P:Parameter", "S231P:value": "{ terms: [Array] } " }
+              ]
+            }"#,
+        );
+        assert!(
+            projection
+                .diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.code() != ProjectionCode::ValueArtifact),
+            "verbatim-distinct strings must not match the C-003 artifact"
+        );
+    }
+
+    #[test]
+    fn subclass_compatible_types_merge_to_most_specific() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                { "@id": "ex:A", "@type": ["S231:Block", "S231:CompositeBlock"] },
+                { "@id": "ex:B", "@type": ["S231:InputConnector", "S231:RealInput"] }
+              ]
+            }"#,
+        );
+        assert_eq!(
+            projection.nodes()[0].class(),
+            NodeClass::Block(BlockKind::Composite)
+        );
+        assert_eq!(
+            projection.nodes()[1].class(),
+            NodeClass::Connector(ConnectorClass {
+                is_input: true,
+                data_type: Some(DataTypeKind::Real)
+            })
+        );
+        assert_eq!(codes(&projection), Vec::<ProjectionCode>::new());
+
+        let incompatible = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                { "@id": "ex:C", "@type": ["S231:Parameter", "S231:Constant"] }
+              ]
+            }"#,
+        );
+        assert_eq!(codes(&incompatible), vec![ProjectionCode::ConflictingTypes]);
+        assert_eq!(incompatible.nodes()[0].class(), NodeClass::Parameter);
+    }
+
+    #[test]
+    fn projection_retains_source_for_token_spelling() {
+        let input = r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                { "@id": "ex:N", "@type": "S231:Parameter", "S231:value": 1e3 }
+              ]
+            }"#;
+        let projection = project_str(input);
+        let node = &projection.nodes()[0];
+        let value = node.value().expect("value must project");
+        assert_eq!(
+            projection.source_slice(value.token()),
+            Some("1e3"),
+            "exact number spelling survives only through the retained source"
+        );
+        assert_eq!(projection.source_document().as_bytes(), input.as_bytes());
     }
 }
