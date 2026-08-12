@@ -1,6 +1,8 @@
 import hashlib
+import errno
 import importlib.util
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -20,6 +22,12 @@ class HistoryInventoryTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
+        git_executable = shutil.which("git")
+        if git_executable is None:
+            self.fail("git executable was not found")
+        self.git_executable = str(Path(git_executable).resolve())
+        self.runner = history.GitRunner(self.git_executable)
+        self.addCleanup(self.runner.close)
         self.repository = Path(self.temporary_directory.name) / "repository"
         self.git("init", "-b", "main", str(self.repository), use_repository=False)
         self.git("config", "user.name", "History Test")
@@ -94,6 +102,7 @@ class HistoryInventoryTests(unittest.TestCase):
             max_scanned_object_bytes=1_024,
             large_blob_bytes=48,
             allow_noncanonical_remote=True,
+            git_executable=self.git_executable,
         )
 
     def test_inventories_refs_deleted_blobs_and_author_metadata(self):
@@ -103,7 +112,11 @@ class HistoryInventoryTests(unittest.TestCase):
         self.assertEqual(len(inventory["commits"]), 2)
         self.assertIn(
             "deleted.txt",
-            {path for blob in inventory["blobs"] for path in blob["paths"]},
+            {
+                path["display"]
+                for blob in inventory["blobs"]
+                for path in blob["path_records"]
+            },
         )
         self.assertEqual(inventory["commits"][0]["author_email"], "history@example.test")
         self.assertEqual(inventory["coverage_errors"], [])
@@ -161,9 +174,12 @@ class HistoryInventoryTests(unittest.TestCase):
             max_scanned_object_bytes=32,
             large_blob_bytes=48,
             allow_noncanonical_remote=True,
+            git_executable=self.git_executable,
         )
         blobs = {
-            path: blob for blob in inventory["blobs"] for path in blob["paths"]
+            path["display"]: blob
+            for blob in inventory["blobs"]
+            for path in blob["path_records"]
         }
 
         self.assertTrue(blobs["artifact.wasm"]["binary"])
@@ -192,6 +208,69 @@ class HistoryInventoryTests(unittest.TestCase):
 
         self.assertEqual(report.read_text(), "complete\n")
         self.assertEqual(list(report.parent.glob(f".{report.name}.*.tmp")), [])
+
+    def test_fsyncs_report_directory_after_replace(self):
+        report = Path(self.temporary_directory.name) / "report.md"
+        real_fsync = os.fsync
+        synced_directory = False
+
+        def record_fsync(file_descriptor):
+            nonlocal synced_directory
+            descriptor_stat = os.fstat(file_descriptor)
+            if (
+                descriptor_stat.st_dev == os.stat(report.parent).st_dev
+                and descriptor_stat.st_ino == os.stat(report.parent).st_ino
+            ):
+                synced_directory = True
+            return real_fsync(file_descriptor)
+
+        with mock.patch.object(os, "fsync", side_effect=record_fsync):
+            history.write_report(report, "complete\n")
+
+        self.assertTrue(synced_directory)
+
+    def test_rejects_unsupported_report_directory_fsync(self):
+        report = Path(self.temporary_directory.name) / "report.md"
+        real_fsync = os.fsync
+
+        def fail_directory_fsync(file_descriptor):
+            descriptor_stat = os.fstat(file_descriptor)
+            directory_stat = os.stat(report.parent)
+            if (
+                descriptor_stat.st_dev == directory_stat.st_dev
+                and descriptor_stat.st_ino == directory_stat.st_ino
+            ):
+                raise OSError(errno.EINVAL, "directory fsync unsupported")
+            return real_fsync(file_descriptor)
+
+        with (
+            mock.patch.object(os, "fsync", side_effect=fail_directory_fsync),
+            self.assertRaises(OSError),
+        ):
+            history.write_report(report, "complete\n")
+
+    def test_fsyncs_parent_of_new_report_directories(self):
+        report = Path(self.temporary_directory.name) / "new" / "nested" / "report.md"
+        root = Path(self.temporary_directory.name)
+        real_fsync = os.fsync
+        synced = set()
+
+        def record_fsync(file_descriptor):
+            descriptor_stat = os.fstat(file_descriptor)
+            for directory in (root, root / "new", root / "new" / "nested"):
+                if directory.exists():
+                    directory_stat = os.stat(directory)
+                    if (
+                        descriptor_stat.st_dev == directory_stat.st_dev
+                        and descriptor_stat.st_ino == directory_stat.st_ino
+                    ):
+                        synced.add(directory)
+            return real_fsync(file_descriptor)
+
+        with mock.patch.object(os, "fsync", side_effect=record_fsync):
+            history.write_report(report, "complete\n")
+
+        self.assertEqual(synced, {root, root / "new", root / "new" / "nested"})
 
     def test_failed_report_replace_preserves_existing_report(self):
         report = Path(self.temporary_directory.name) / "report.md"
@@ -240,6 +319,7 @@ class HistoryInventoryTests(unittest.TestCase):
                 max_scanned_object_bytes=1_024,
                 large_blob_bytes=48,
                 allow_noncanonical_remote=True,
+                git_executable=self.git_executable,
             )
 
     def test_rejects_unreachable_final_commit(self):
@@ -249,6 +329,7 @@ class HistoryInventoryTests(unittest.TestCase):
                 "0" * 40,
                 str(self.repository),
                 allow_noncanonical_remote=True,
+                git_executable=self.git_executable,
             )
 
     def test_rejects_credential_bearing_remote_url(self):
@@ -257,11 +338,17 @@ class HistoryInventoryTests(unittest.TestCase):
                 self.repository,
                 self.final_commit,
                 "https://token@example.test/repository.git",
+                git_executable=self.git_executable,
             )
 
     def test_rejects_configured_remote_name(self):
         with self.assertRaises(history.InventoryError):
-            history.collect_inventory(self.repository, self.final_commit, "origin")
+            history.collect_inventory(
+                self.repository,
+                self.final_commit,
+                "origin",
+                git_executable=self.git_executable,
+            )
 
     def test_rejects_shallow_repository(self):
         shallow = Path(self.temporary_directory.name) / "shallow"
@@ -280,6 +367,7 @@ class HistoryInventoryTests(unittest.TestCase):
                 self.final_commit,
                 str(self.repository),
                 allow_noncanonical_remote=True,
+                git_executable=self.git_executable,
             )
 
     def test_rejects_repository_local_url_rewrites(self):
@@ -288,6 +376,22 @@ class HistoryInventoryTests(unittest.TestCase):
             "url.https://example.test/.insteadOf",
             "https://github.com/",
         )
+
+        with self.assertRaises(history.InventoryError):
+            self.inventory()
+
+    def test_rejects_remote_name_that_shadows_the_canonical_url(self):
+        self.git(
+            "config",
+            f"remote.{history.CANONICAL_REMOTE_URL}.url",
+            str(self.repository),
+        )
+
+        with self.assertRaises(history.InventoryError):
+            self.inventory()
+
+    def test_rejects_worktree_config_scope(self):
+        self.git("config", "extensions.worktreeConfig", "true")
 
         with self.assertRaises(history.InventoryError):
             self.inventory()
@@ -309,6 +413,21 @@ class HistoryInventoryTests(unittest.TestCase):
             inventory = self.inventory()
 
         self.assertEqual(inventory["final_commit"], self.final_commit)
+
+    def test_git_environment_does_not_inherit_loader_or_credential_variables(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "LD_PRELOAD": "/tmp/injected.so",
+                "DYLD_INSERT_LIBRARIES": "/tmp/injected.dylib",
+                "AWS_SECRET_ACCESS_KEY": "secret",
+            },
+        ):
+            environment = history.git_environment()
+
+        self.assertNotIn("LD_PRELOAD", environment)
+        self.assertNotIn("DYLD_INSERT_LIBRARIES", environment)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", environment)
 
     def test_reports_unsupported_nested_tag(self):
         self.git("tag", "-a", "inner", "-m", "inner")
@@ -348,6 +467,18 @@ class HistoryInventoryTests(unittest.TestCase):
         self.assertNotIn("A" * 36, encoded)
         self.assertIn(hashlib.sha256(secret).hexdigest(), encoded)
 
+    def test_keeps_raw_path_identity_and_classification_after_redaction(self):
+        secret_path = b"password=supersecret.wasm"
+        literal_path = b"REDACTED_assigned-secret.wasm"
+
+        secret_record = history.path_record(secret_path)
+        literal_record = history.path_record(literal_path)
+
+        self.assertEqual(secret_record["identity"], secret_path)
+        self.assertEqual(literal_record["identity"], literal_path)
+        self.assertTrue(secret_record["generated_candidate"])
+        self.assertTrue(literal_record["generated_candidate"])
+
     def test_escapes_control_characters_in_report_cells(self):
         self.assertEqual(
             history.markdown("tab\treturn\rend"), "tab\\\\u0009return\\\\u000dend"
@@ -357,8 +488,138 @@ class HistoryInventoryTests(unittest.TestCase):
         rendered = history.markdown("![remote](https://example.test/pixel)")
 
         self.assertEqual(
-            rendered, "\\!\\[remote\\]\\(https://example.test/pixel\\)"
+            rendered, "\\!\\[remote\\]\\(https:\\/\\/example.test/pixel\\)"
         )
+
+    def test_escapes_markdown_code_spans(self):
+        self.assertEqual(history.markdown("`code`"), "\\`code\\`")
+
+    def test_inline_code_uses_a_safe_backtick_delimiter(self):
+        rendered = history.inline_code("value ` ![remote](https://example.test/pixel)")
+
+        self.assertTrue(rendered.startswith("``"))
+        self.assertTrue(rendered.endswith("``"))
+        self.assertIn("value ` ![remote](https://example.test/pixel)", rendered)
+
+    def test_inline_code_preserves_ampersands(self):
+        self.assertEqual(history.inline_code("/tmp/a&b/git"), "`/tmp/a&b/git`")
+
+    def test_redacts_secret_bearing_ref_for_display(self):
+        ref_name = b"refs/heads/AKIA1234567890ABCDEF"
+        self.git("update-ref", ref_name.decode(), self.final_commit)
+
+        inventory = self.inventory()
+        report = history.render_report(inventory, "inventory command")
+        ref = next(
+            item for item in inventory["refs"] if item["name"] == history.encode_ref(ref_name)
+        )
+
+        self.assertNotIn("AKIA1234567890ABCDEF", ref["display_name"])
+        self.assertNotIn("AKIA1234567890ABCDEF", report)
+        self.assertIn(hashlib.sha256(ref_name).hexdigest(), ref["display_name"])
+        self.assertEqual(history.encode_ref(ref_name), "refs/heads/AKIA1234567890ABCDEF")
+
+    def test_pinned_git_runner_ignores_inherited_path_and_exec_path(self):
+        fake_directory = Path(self.temporary_directory.name) / "fake-bin"
+        fake_directory.mkdir()
+        fake_git = fake_directory / "git"
+        fake_git.write_text("#!/bin/sh\nexit 99\n")
+        fake_git.chmod(0o755)
+
+        with mock.patch.dict(
+            os.environ,
+            {"PATH": str(fake_directory), "GIT_EXEC_PATH": str(fake_directory)},
+        ):
+            output = self.runner.limited(self.repository, 128, "--version")
+
+        self.assertTrue(output.startswith(b"git version "))
+
+    def test_pinned_git_runner_rejects_snapshot_mutation(self):
+        runner = history.GitRunner(self.git_executable)
+        executable = Path(runner.command)
+        original = executable.read_bytes()
+        try:
+            executable.chmod(0o700)
+            executable.write_bytes(original + b"altered")
+            with self.assertRaisesRegex(history.InventoryError, "snapshot changed"):
+                runner.close()
+        finally:
+            if executable.exists():
+                executable.write_bytes(original)
+                executable.chmod(0o500)
+                runner.close()
+
+    def test_rejects_relative_git_executable(self):
+        with self.assertRaises(history.InventoryError):
+            history.GitRunner("git")
+
+    def test_object_reads_use_the_bounded_runner(self):
+        object_id = self.git("hash-object", "src.txt").stdout.strip()
+        size = int(self.git("cat-file", "-s", object_id).stdout)
+
+        with mock.patch.object(
+            self.runner, "limited", wraps=self.runner.limited
+        ) as limited:
+            data = history.read_git_object(
+                self.repository, "blob", object_id, size, runner=self.runner
+            )
+
+        self.assertEqual(data, b"current\n")
+        limited.assert_called_once_with(
+            self.repository, size, "cat-file", "blob", object_id, input_data=None
+        )
+
+    def test_rejects_object_output_above_declared_size(self):
+        object_id = self.git("hash-object", "src.txt").stdout.strip()
+
+        with self.assertRaises(history.InventoryError):
+            history.read_git_object(
+                self.repository, "blob", object_id, 1, runner=self.runner
+            )
+
+    def test_rejects_object_content_that_does_not_match_the_object_id(self):
+        object_id = self.git("hash-object", "src.txt").stdout.strip()
+        size = int(self.git("cat-file", "-s", object_id).stdout)
+        replacement = b"changed\n"
+        self.assertEqual(len(replacement), size)
+
+        with (
+            mock.patch.object(self.runner, "limited", return_value=replacement),
+            self.assertRaisesRegex(history.InventoryError, "object ID mismatch"),
+        ):
+            history.read_git_object(
+                self.repository, "blob", object_id, size, runner=self.runner
+            )
+
+    def test_object_read_timeout_kills_the_git_process(self):
+        runner = mock.Mock()
+        runner.limited.side_effect = lambda *args, **kwargs: history.run_limited_process(
+            ["/bin/sleep", "10"], history.git_environment(), args[1]
+        )
+
+        with (
+            mock.patch.object(history, "GIT_TIMEOUT_SECONDS", 0.01),
+            self.assertRaisesRegex(history.InventoryError, "timed out"),
+        ):
+            history.read_git_object(
+                self.repository, "blob", "1" * 40, 1, runner=runner
+            )
+
+    def test_output_limit_does_not_wait_for_git_eof(self):
+        runner = mock.Mock()
+        runner.limited.side_effect = lambda *args, **kwargs: history.run_limited_process(
+            ["/bin/sh", "-c", "printf ab; exec /bin/sleep 10"],
+            history.git_environment(),
+            args[1],
+        )
+
+        with (
+            mock.patch.object(history, "GIT_TIMEOUT_SECONDS", 5),
+            self.assertRaisesRegex(history.InventoryError, "output exceeded 1 bytes"),
+        ):
+            history.read_git_object(
+                self.repository, "blob", "1" * 40, 1, runner=runner
+            )
 
     def test_rejects_malformed_remote_advertisement(self):
         with mock.patch.object(history, "git_limited", return_value=b"malformed\n"):
@@ -411,6 +672,7 @@ class HistoryInventoryTests(unittest.TestCase):
                 1,
                 "for-each-ref",
                 "--format=%(refname)",
+                runner=self.runner,
             )
 
     def test_rejects_non_posix_platform_before_spawn(self):
@@ -419,7 +681,7 @@ class HistoryInventoryTests(unittest.TestCase):
             mock.patch.object(history.subprocess, "Popen") as popen,
             self.assertRaises(history.InventoryError),
         ):
-            history.git_limited(self.repository, 1, "status")
+            history.git_limited(self.repository, 1, "status", runner=self.runner)
 
         popen.assert_not_called()
 
@@ -439,7 +701,9 @@ class HistoryInventoryTests(unittest.TestCase):
             mock.patch.object(history, "MAX_PATH_BYTES", 1),
             self.assertRaises(history.InventoryError),
         ):
-            history.tree_entries(self.repository, self.final_commit)
+            history.tree_entries(
+                self.repository, self.final_commit, runner=self.runner
+            )
 
     def test_rejects_aggregate_tree_entries_above_limit(self):
         with (
@@ -475,7 +739,7 @@ class HistoryInventoryTests(unittest.TestCase):
             ),
             self.assertRaises(history.InventoryError) as raised,
         ):
-            history.git_text(self.repository, "status")
+            history.git_text(self.repository, "status", runner=self.runner)
 
         message = str(raised.exception)
         self.assertNotIn("supersecret", message)
@@ -505,6 +769,7 @@ class HistoryInventoryTests(unittest.TestCase):
                 self.final_commit,
                 str(self.repository),
                 allow_noncanonical_remote=True,
+                git_executable=self.git_executable,
             )
 
 

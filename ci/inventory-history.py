@@ -4,17 +4,20 @@ import html
 import os
 import platform
 import re
+import selectors
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
-import threading
+import time
 import unicodedata
 from pathlib import Path
-from urllib.parse import quote_from_bytes, urlsplit
+from urllib.parse import quote_from_bytes, unquote_to_bytes, urlsplit
 
 
-TOOL_VERSION = 1
+TOOL_VERSION = 2
 CANONICAL_REMOTE_URL = "https://github.com/jscott3201/cxf-json.git"
 DEFAULT_LARGE_BLOB_BYTES = 1_048_576
 DEFAULT_MAX_SCANNED_OBJECT_BYTES = 4_194_304
@@ -33,21 +36,8 @@ MAX_UNIQUE_BLOBS = 100_000
 MAX_TOTAL_SCANNED_OBJECT_BYTES = 268_435_456
 MAX_CANDIDATE_PATHS = 20
 MAX_GIT_TEXT_OUTPUT_BYTES = 4_194_304
+MAX_GIT_PROGRAM_BYTES = 67_108_864
 OID_PATTERN = re.compile(r"[0-9a-f]{40}")
-TRANSPORT_ENVIRONMENT = {
-    "ALL_PROXY",
-    "CURL_CA_BUNDLE",
-    "HTTPS_PROXY",
-    "HTTP_PROXY",
-    "NO_PROXY",
-    "REQUESTS_CA_BUNDLE",
-    "SSL_CERT_DIR",
-    "SSL_CERT_FILE",
-    "all_proxy",
-    "https_proxy",
-    "http_proxy",
-    "no_proxy",
-}
 SECRET_PATTERNS = [
     (
         "private-key-header",
@@ -96,6 +86,21 @@ class InventoryError(Exception):
     pass
 
 
+def git_environment():
+    return {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_COUNT": "0",
+        "GIT_GRAFT_FILE": os.devnull,
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GCM_INTERACTIVE": "never",
+        "LC_ALL": "C",
+        "PATH": os.defpath,
+    }
+
+
 def safe_log_text(value):
     return "".join(
         character
@@ -105,137 +110,106 @@ def safe_log_text(value):
     )
 
 
-def git(repository, *arguments, input_data=None, text=True, check=True):
-    environment = {
-        name: value
-        for name, value in os.environ.items()
-        if not name.startswith("GIT_")
-        and name not in TRANSPORT_ENVIRONMENT
-        and name not in {"GCM_INTERACTIVE"}
-    }
-    environment.update(
-        {
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_GRAFT_FILE": os.devnull,
-            "GIT_NO_LAZY_FETCH": "1",
-            "GIT_NO_REPLACE_OBJECTS": "1",
-            "GIT_TERMINAL_PROMPT": "0",
-            "GCM_INTERACTIVE": "never",
-            "LC_ALL": "C",
-        }
-    )
-    options = {
-        "check": check,
-        "capture_output": True,
-        "env": environment,
-        "input": input_data,
-        "timeout": GIT_TIMEOUT_SECONDS,
-    }
-    if text:
-        options.update({"encoding": "utf-8", "errors": "backslashreplace"})
-    return subprocess.run(
-        ["git", "--no-replace-objects", "-C", str(repository), *arguments],
-        **options,
-    )
-
-
-def git_limited(repository, max_stdout_bytes, *arguments):
+def run_limited_process(command, environment, max_stdout_bytes, input_data=None):
     if os.name != "posix":
         raise InventoryError("history inventory requires POSIX process-group controls")
-    environment = {
-        name: value
-        for name, value in os.environ.items()
-        if not name.startswith("GIT_")
-        and name not in TRANSPORT_ENVIRONMENT
-        and name not in {"GCM_INTERACTIVE"}
-    }
-    environment.update(
-        {
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_GRAFT_FILE": os.devnull,
-            "GIT_NO_LAZY_FETCH": "1",
-            "GIT_NO_REPLACE_OBJECTS": "1",
-            "GIT_TERMINAL_PROMPT": "0",
-            "GCM_INTERACTIVE": "never",
-            "LC_ALL": "C",
-        }
-    )
-    process = subprocess.Popen(
-        ["git", "--no-replace-objects", "-C", str(repository), *arguments],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=environment,
-        start_new_session=True,
-    )
+    selector = selectors.DefaultSelector()
+    process = None
+    return_code = None
+    input_file = None
     stdout = bytearray()
     stderr = bytearray()
-    stdout_exceeded = threading.Event()
-    stderr_exceeded = threading.Event()
-    reader_errors = []
 
     def kill_process_group():
+        if process is None:
+            return
         try:
-            os.killpg(process.pid, 9)
+            os.killpg(process.pid, signal.SIGKILL)
         except (PermissionError, ProcessLookupError):
             try:
                 process.kill()
             except ProcessLookupError:
                 pass
 
-    def read_stream(stream, destination, limit, overflow):
-        try:
-            while True:
-                chunk = stream.read(65_536)
-                if not chunk:
-                    return
-                remaining = limit - len(destination)
-                if remaining > 0:
-                    destination.extend(chunk[:remaining])
-                if len(chunk) > remaining:
-                    overflow.set()
-                    kill_process_group()
-                    return
-        except (OSError, ValueError) as error:
-            reader_errors.append(error)
-            kill_process_group()
-
-    assert process.stdout is not None
-    assert process.stderr is not None
-
-    stdout_thread = threading.Thread(
-        target=read_stream,
-        args=(process.stdout, stdout, max_stdout_bytes, stdout_exceeded),
-        daemon=True,
-    )
-    stderr_thread = threading.Thread(
-        target=read_stream,
-        args=(process.stderr, stderr, 65_536, stderr_exceeded),
-        daemon=True,
-    )
-    stdout_thread.start()
-    stderr_thread.start()
     try:
-        return_code = process.wait(timeout=GIT_TIMEOUT_SECONDS)
+        if input_data is not None:
+            input_file = tempfile.TemporaryFile()
+            input_file.write(input_data)
+            input_file.seek(0)
+        process = subprocess.Popen(
+            command,
+            stdin=input_file if input_file is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+            start_new_session=True,
+        )
+        assert process.stdout is not None
+        assert process.stderr is not None
+        streams = {
+            process.stdout.fileno(): (
+                process.stdout,
+                stdout,
+                max_stdout_bytes,
+                "output",
+            ),
+            process.stderr.fileno(): (process.stderr, stderr, 65_536, "stderr"),
+        }
+        for file_descriptor, stream in streams.items():
+            os.set_blocking(file_descriptor, False)
+            selector.register(file_descriptor, selectors.EVENT_READ, stream)
+        deadline = time.monotonic() + GIT_TIMEOUT_SECONDS
+        while selector.get_map():
+            remaining_time = deadline - time.monotonic()
+            if remaining_time <= 0:
+                raise InventoryError("Git command timed out")
+            for key, _ in selector.select(remaining_time):
+                stream, destination, limit, label = key.data
+                try:
+                    chunk = os.read(key.fd, 65_536)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    selector.unregister(key.fd)
+                    continue
+                remaining_bytes = limit - len(destination)
+                if remaining_bytes > 0:
+                    destination.extend(chunk[:remaining_bytes])
+                if len(chunk) > remaining_bytes:
+                    raise InventoryError(
+                        f"Git command {label} exceeded {limit} bytes"
+                    )
+        remaining_time = deadline - time.monotonic()
+        if remaining_time <= 0:
+            raise InventoryError("Git command timed out")
+        while True:
+            result = os.waitid(
+                os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
+            )
+            if result is not None:
+                break
+            if time.monotonic() >= deadline:
+                raise InventoryError("Git command timed out")
+            time.sleep(0.001)
     except subprocess.TimeoutExpired as error:
-        kill_process_group()
-        process.wait(timeout=5)
-        raise InventoryError(f"Git command timed out: {' '.join(arguments)}") from error
+        raise InventoryError("Git command timed out") from error
     finally:
-        stdout_thread.join(timeout=5)
-        stderr_thread.join(timeout=5)
-    if stdout_thread.is_alive() or stderr_thread.is_alive():
-        kill_process_group()
-        raise InventoryError("Git output readers did not terminate")
-    process.stdout.close()
-    process.stderr.close()
-    if reader_errors:
-        raise InventoryError("Git output reader failed") from reader_errors[0]
-    if stderr_exceeded.is_set():
-        raise InventoryError("Git command stderr exceeded 65536 bytes")
-    if stdout_exceeded.is_set():
-        raise InventoryError(f"Git command output exceeded {max_stdout_bytes} bytes")
+        selector.close()
+        if process is not None:
+            kill_process_group()
+            try:
+                return_code = process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                return_code = process.wait(timeout=5)
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
+        if input_file is not None:
+            input_file.close()
+    if return_code is None:
+        raise InventoryError("Git command did not report an exit status")
     if return_code != 0:
         message = safe_log_text(stderr.decode("utf-8", "backslashreplace")).strip()
         message = redact_secret_text(message) or "Git command failed"
@@ -243,10 +217,200 @@ def git_limited(repository, max_stdout_bytes, *arguments):
     return bytes(stdout)
 
 
-def git_text(repository, *arguments):
+def program_sha256(path):
+    size = path.stat().st_size
+    if size > MAX_GIT_PROGRAM_BYTES:
+        raise InventoryError(
+            f"Git program exceeds {MAX_GIT_PROGRAM_BYTES} bytes: {path.name}"
+        )
+    digest = hashlib.sha256()
+    with path.open("rb") as program:
+        for chunk in iter(lambda: program.read(65_536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_program(path, name):
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise InventoryError(f"{name} must be an executable file")
+    if path.stat().st_size > MAX_GIT_PROGRAM_BYTES:
+        raise InventoryError(f"{name} exceeds {MAX_GIT_PROGRAM_BYTES} bytes")
+    with path.open("rb") as program:
+        magic = program.read(4)
+    native_magics = {
+        b"\x7fELF",
+        b"\xca\xfe\xba\xbe",
+        b"\xce\xfa\xed\xfe",
+        b"\xcf\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xce",
+        b"\xfe\xed\xfa\xcf",
+    }
+    if magic not in native_magics:
+        raise InventoryError(f"{name} must be a native executable")
+
+
+class GitRunner:
+    def __init__(self, executable):
+        executable = Path(executable)
+        if not executable.is_absolute():
+            raise InventoryError("--git-executable must be an absolute path")
+        try:
+            executable = executable.resolve(strict=True)
+        except OSError as error:
+            raise InventoryError("--git-executable does not exist") from error
+        validate_program(executable, "--git-executable")
+
+        environment = git_environment()
+        output = run_limited_process(
+            [str(executable), "--exec-path"], environment, MAX_PATH_BYTES
+        )
+        try:
+            exec_path = Path(output.decode("utf-8", "strict").strip())
+        except UnicodeDecodeError as error:
+            raise InventoryError("git --exec-path returned invalid UTF-8") from error
+        if not exec_path.is_absolute() or not exec_path.is_dir():
+            raise InventoryError("git --exec-path did not return an absolute directory")
+        installation_root = Path(os.path.commonpath([executable, exec_path]))
+        if installation_root == Path(installation_root.anchor):
+            raise InventoryError(
+                "Git executable and helper directory must share an installation root"
+            )
+
+        self.executable = str(executable)
+        self.exec_path = str(exec_path.resolve())
+        helper = Path(self.exec_path, "git-remote-https")
+        try:
+            helper = helper.resolve(strict=True)
+            helper.relative_to(self.exec_path)
+        except (OSError, ValueError) as error:
+            raise InventoryError(
+                "Git HTTPS helper must resolve inside the helper directory"
+            ) from error
+        validate_program(helper, "Git HTTPS helper")
+        self.https_helper = str(helper)
+        snapshot_path = Path(tempfile.mkdtemp(prefix="cxf-json-git-"))
+        self.snapshot_path = snapshot_path
+        snapshot_executable = snapshot_path / "git"
+        snapshot_https_helper = snapshot_path / "git-remote-https"
+        try:
+            for source, destination in (
+                (executable, snapshot_executable),
+                (helper, snapshot_https_helper),
+            ):
+                shutil.copyfile(source, destination)
+                destination.chmod(0o500)
+            (snapshot_path / "git-upload-pack").symlink_to("git")
+            snapshot_path.chmod(0o500)
+            self.executable_sha256 = program_sha256(snapshot_executable)
+            self.https_helper_sha256 = program_sha256(snapshot_https_helper)
+        except (OSError, InventoryError):
+            snapshot_path.chmod(0o700)
+            shutil.rmtree(snapshot_path, ignore_errors=True)
+            self.snapshot_path = None
+            raise
+        self.command = str(snapshot_executable)
+        self.command_exec_path = str(snapshot_path)
+        environment["GIT_EXEC_PATH"] = self.command_exec_path
+        environment["PATH"] = os.pathsep.join(
+            dict.fromkeys([self.command_exec_path])
+        )
+        self.environment = environment
+
+    def verify_snapshot(self):
+        if program_sha256(Path(self.command)) != self.executable_sha256:
+            raise InventoryError("Git executable snapshot changed during inventory")
+        if (
+            program_sha256(Path(self.command_exec_path, "git-remote-https"))
+            != self.https_helper_sha256
+        ):
+            raise InventoryError("Git HTTPS helper snapshot changed during inventory")
+
+    def close(self):
+        snapshot_path = getattr(self, "snapshot_path", None)
+        if snapshot_path is not None:
+            error = None
+            try:
+                self.verify_snapshot()
+            except InventoryError as snapshot_error:
+                error = snapshot_error
+            finally:
+                snapshot_path.chmod(0o700)
+                shutil.rmtree(snapshot_path)
+                self.snapshot_path = None
+            if error is not None:
+                raise error
+
+    def __del__(self):
+        try:
+            self.close()
+        except (InventoryError, OSError):
+            pass
+
+    def limited(self, repository, max_stdout_bytes, *arguments, input_data=None):
+        if os.name != "posix":
+            raise InventoryError("history inventory requires POSIX process-group controls")
+        return run_limited_process(
+            [
+                self.command,
+                f"--exec-path={self.command_exec_path}",
+                "--no-replace-objects",
+                "-c",
+                "http.followRedirects=false",
+                "-C",
+                str(repository),
+                *arguments,
+            ],
+            self.environment,
+            max_stdout_bytes,
+            input_data=input_data,
+        )
+
+
+def default_git_runner():
+    raise InventoryError("an absolute Git executable is required")
+
+
+def git_limited(
+    repository, max_stdout_bytes, *arguments, runner=None, input_data=None
+):
+    return (runner or default_git_runner()).limited(
+        repository, max_stdout_bytes, *arguments, input_data=input_data
+    )
+
+
+def git_text(repository, *arguments, runner=None):
     return git_limited(
-        repository, MAX_GIT_TEXT_OUTPUT_BYTES, *arguments
+        repository, MAX_GIT_TEXT_OUTPUT_BYTES, *arguments, runner=runner
     ).decode("utf-8", "backslashreplace")
+
+
+def read_git_object(repository, object_type, object_id, size, runner=None):
+    data = git_limited(
+        repository,
+        size,
+        "cat-file",
+        object_type,
+        object_id,
+        runner=runner,
+    )
+    if len(data) != size:
+        raise InventoryError(f"short read for {object_type} {object_id}")
+    header = f"{object_type} {size}\0".encode()
+    if hashlib.sha1(header + data).hexdigest() != object_id:
+        raise InventoryError(f"object ID mismatch for {object_type} {object_id}")
+    return data
+
+
+def validate_object_database(repository, runner=None):
+    git_limited(
+        repository,
+        MAX_GIT_TEXT_OUTPUT_BYTES,
+        "fsck",
+        "--strict",
+        "--no-dangling",
+        "--no-reflogs",
+        runner=runner,
+    )
 
 
 def parse_tag_object(data):
@@ -276,12 +440,13 @@ def parse_tag_object(data):
     }
 
 
-def collect_refs(repository):
+def collect_refs(repository, runner=None):
     output = git_limited(
         repository,
         MAX_REMOTE_ADVERTISEMENT_BYTES,
         "for-each-ref",
         "--format=%(refname)%00%(objecttype)%00%(objectname)%00",
+        runner=runner,
     )
     if output and not output.endswith(b"\0\n"):
         raise InventoryError("local ref inventory is incomplete")
@@ -306,6 +471,7 @@ def collect_refs(repository):
         refs.append(
             {
                 "name": ref_name,
+                "display_name": encode_ref_display(fields[index]),
                 "object_type": object_type,
                 "object_id": object_id,
             }
@@ -313,20 +479,25 @@ def collect_refs(repository):
     return sorted(refs, key=lambda ref: ref["name"]), errors
 
 
-def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget):
+def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget, runner=None):
     hydrated = []
     errors = []
     for ref in refs:
         ref = dict(ref)
         object_type = ref["object_type"]
         object_id = ref["object_id"]
-        ref_name = ref["name"]
+        display_name = ref["display_name"]
         tag_metadata = None
         tag_size = None
+        ref_error_count = len(errors)
         if object_type == "tag":
-            tag_size = int(git_text(repository, "cat-file", "-s", object_id).strip())
+            tag_size = int(
+                git_text(
+                    repository, "cat-file", "-s", object_id, runner=runner
+                ).strip()
+            )
             if tag_size > max_scanned_object_bytes:
-                errors.append(f"{ref_name} tag metadata exceeds the content scan cap")
+                errors.append(f"{display_name} tag metadata exceeds the content scan cap")
                 commit = None
                 tag_metadata = {
                     "tagger_name": "(not scanned)",
@@ -341,24 +512,30 @@ def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget):
                         "aggregate scanned object bytes exceed "
                         f"{MAX_TOTAL_SCANNED_OBJECT_BYTES}"
                     )
-                tag_data = git(repository, "cat-file", "tag", object_id, text=False).stdout
+                tag_data = read_git_object(
+                    repository, "tag", object_id, tag_size, runner=runner
+                )
                 target_type, tag_metadata = parse_tag_object(tag_data)
                 if target_type == "tag":
-                    errors.append(f"{ref_name} uses an unsupported nested annotated tag")
-                resolved = git(
-                    repository,
-                    "rev-parse",
-                    "--verify",
-                    f"{object_id}^{{commit}}",
-                    check=False,
-                )
-                commit = resolved.stdout.strip() if resolved.returncode == 0 else None
+                    errors.append(
+                        f"{display_name} uses an unsupported nested annotated tag"
+                    )
+                try:
+                    commit = git_text(
+                        repository,
+                        "rev-parse",
+                        "--verify",
+                        f"{object_id}^{{commit}}",
+                        runner=runner,
+                    ).strip()
+                except InventoryError:
+                    commit = None
         elif object_type == "commit":
             commit = object_id
         else:
             commit = None
-        if commit is None and not any(error.startswith(ref_name) for error in errors):
-            errors.append(f"{ref_name} does not resolve to a commit")
+        if commit is None and len(errors) == ref_error_count:
+            errors.append(f"{display_name} does not resolve to a commit")
         ref.update(
             {
                 "commit": commit,
@@ -370,13 +547,14 @@ def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget):
     return hydrated, errors
 
 
-def collect_remote_refs(repository, remote_url):
+def collect_remote_refs(repository, remote_url, runner=None):
     output = git_limited(
         repository,
         MAX_REMOTE_ADVERTISEMENT_BYTES,
         "ls-remote",
         "--refs",
         remote_url,
+        runner=runner,
     )
     if output and not output.endswith(b"\n"):
         raise InventoryError("remote ref advertisement is incomplete")
@@ -396,7 +574,9 @@ def collect_remote_refs(repository, remote_url):
             raise InventoryError(f"remote ref name exceeds {MAX_REF_NAME_BYTES} bytes")
         ref_name = encode_ref(ref_name_bytes)
         if ref_name in refs:
-            raise InventoryError(f"duplicate remote ref advertisement: {ref_name}")
+            raise InventoryError(
+                f"duplicate remote ref advertisement: {encode_ref_display(ref_name_bytes)}"
+            )
         if len(refs) == MAX_REMOTE_REFS:
             raise InventoryError(f"remote ref count exceeds {MAX_REMOTE_REFS}")
         refs[ref_name] = object_id
@@ -434,20 +614,36 @@ def validate_remote_url(remote_url, allow_noncanonical_remote):
         )
 
 
-def validate_repository(repository, remote_url):
-    git_text(repository, "rev-parse", "--git-dir")
-    version_output = git_text(repository, "--version").strip()
+def validate_repository(repository, remote_url, runner=None):
+    git_text(repository, "rev-parse", "--git-dir", runner=runner)
+    version_output = git_text(repository, "--version", runner=runner).strip()
     version_match = re.search(r"\b(\d+)\.(\d+)(?:\.\d+)?\b", version_output)
     if version_match is None:
         raise InventoryError("git --version returned an unrecognized version")
     version = tuple(int(component) for component in version_match.groups())
     if version < (2, 45):
         raise InventoryError("history inventory requires Git 2.45 or newer")
-    object_format = git_text(repository, "rev-parse", "--show-object-format").strip()
+    object_format = git_text(
+        repository, "rev-parse", "--show-object-format", runner=runner
+    ).strip()
     if object_format != "sha1":
         raise InventoryError("history inventory currently requires Git SHA-1 object IDs")
-    if git_text(repository, "rev-parse", "--is-shallow-repository").strip() != "false":
+    if (
+        git_text(
+            repository, "rev-parse", "--is-shallow-repository", runner=runner
+        ).strip()
+        != "false"
+    ):
         raise InventoryError("shallow repositories cannot establish complete history")
+    object_directory = Path(
+        git_text(
+            repository, "rev-parse", "--git-path", "objects", runner=runner
+        ).strip()
+    )
+    if not object_directory.is_absolute():
+        object_directory = (repository / object_directory).resolve()
+    if (object_directory / "info" / "alternates").exists():
+        raise InventoryError("repository object alternates are not allowed")
     transport_overrides = git_limited(
         repository,
         MAX_GIT_TEXT_OUTPUT_BYTES,
@@ -456,18 +652,28 @@ def validate_repository(repository, remote_url):
         "--null",
         "--name-only",
         "--list",
+        runner=runner,
     )
     override_pattern = re.compile(
-        rb"^(include(if)?\..*|url\..*\.insteadof|http\..*|credential\..*|remote\..*\.proxy|core\.gitproxy)$"
+        rb"^(extensions\.worktreeconfig|include(if)?\..*|url\..*\.insteadof|http\..*|credential\..*|remote\..*\.proxy|core\.(askpass|gitproxy)|fsck\..*)$"
     )
     if any(
-        override_pattern.fullmatch(name)
+        override_pattern.fullmatch(name.lower())
         for name in transport_overrides.split(b"\0")
         if name
     ):
         raise InventoryError("repository-local transport overrides are not allowed")
+    if any(
+        name.lower().startswith(b"remote.")
+        and not name.lower().startswith(b"remote.origin.")
+        for name in transport_overrides.split(b"\0")
+        if name
+    ):
+        raise InventoryError("repository-local alternate remotes are not allowed")
     try:
-        origin = git_text(repository, "remote", "get-url", "origin").strip()
+        origin = git_text(
+            repository, "remote", "get-url", "origin", runner=runner
+        ).strip()
     except InventoryError as error:
         raise InventoryError("failed to resolve repository origin") from error
     if origin != remote_url:
@@ -475,12 +681,19 @@ def validate_repository(repository, remote_url):
     return {"git_version": version_output, "object_format": object_format}
 
 
-def collect_commits(repository, refs):
+def collect_commits(repository, refs, runner=None):
     tips = sorted({ref["commit"] for ref in refs if ref["commit"] is not None})
     if not tips:
         raise InventoryError("the repository contains no refs that resolve to commits")
     output_limit = (MAX_REACHABLE_COMMITS + 1) * 41
-    output = git_limited(repository, output_limit, "rev-list", *tips)
+    output = git_limited(
+        repository,
+        output_limit,
+        "rev-list",
+        "--stdin",
+        runner=runner,
+        input_data=("".join(f"{tip}\n" for tip in tips)).encode(),
+    )
     if not output.endswith(b"\n"):
         raise InventoryError("reachable commit enumeration is incomplete")
     commits = output.decode("ascii").splitlines()
@@ -492,13 +705,14 @@ def collect_commits(repository, refs):
     return commits
 
 
-def commit_metadata(repository, commit):
+def commit_metadata(repository, commit, runner=None):
     fields = git_text(
         repository,
         "show",
         "-s",
         "--format=%H%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%s",
         commit,
+        runner=runner,
     ).rstrip("\n").split("\0", 7)
     if len(fields) != 8 or fields[0] != commit:
         raise InventoryError(f"malformed metadata for commit {commit}")
@@ -523,11 +737,37 @@ def encode_path(path):
     return encoded
 
 
+def path_record(path):
+    return {
+        "identity": path,
+        "display": encode_path(path),
+        "generated_candidate": any(
+            path.lower().endswith(suffix.encode()) for suffix in GENERATED_SUFFIXES
+        ),
+        "review_document": Path(path.decode("utf-8", "surrogateescape"))
+        .name.upper()
+        .startswith(("LICENSE", "NOTICE", "COPYING", "PROVENANCE")),
+    }
+
+
 def encode_ref(ref_name):
     return quote_from_bytes(ref_name, safe="/._-")
 
 
-def tree_entries(repository, commit):
+def encode_ref_display(ref_name):
+    redacted = redact_secret_bytes(ref_name)
+    encoded = quote_from_bytes(redacted, safe="/._-")
+    if redacted != ref_name:
+        digest = hashlib.sha256(ref_name).hexdigest()
+        return f"{encoded} [ref-sha256:{digest}]"
+    return encoded
+
+
+def display_ref_name(ref_name):
+    return encode_ref_display(unquote_to_bytes(ref_name))
+
+
+def tree_entries(repository, commit, runner=None):
     output = git_limited(
         repository,
         MAX_TREE_OUTPUT_BYTES,
@@ -536,6 +776,7 @@ def tree_entries(repository, commit):
         "-z",
         "--full-tree",
         commit,
+        runner=runner,
     )
     if output and not output.endswith(b"\0"):
         raise InventoryError("historical tree output is incomplete")
@@ -564,7 +805,7 @@ def tree_entries(repository, commit):
                 "mode": mode,
                 "type": object_type,
                 "object_id": object_id,
-                "path": encode_path(path),
+                "path": path,
             }
         )
     return entries, path_bytes
@@ -637,16 +878,6 @@ def is_binary(data):
     return False
 
 
-def is_generated_path(path):
-    lowered = path.lower()
-    return any(lowered.endswith(suffix) for suffix in GENERATED_SUFFIXES)
-
-
-def is_review_document(path):
-    name = Path(path).name.upper()
-    return name.startswith(("LICENSE", "NOTICE", "COPYING", "PROVENANCE"))
-
-
 def collect_inventory(
     repository,
     final_commit,
@@ -654,41 +885,77 @@ def collect_inventory(
     max_scanned_object_bytes=DEFAULT_MAX_SCANNED_OBJECT_BYTES,
     large_blob_bytes=DEFAULT_LARGE_BLOB_BYTES,
     allow_noncanonical_remote=False,
+    git_executable=None,
 ):
     repository = Path(repository).resolve()
+    tool_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     if not OID_PATTERN.fullmatch(final_commit):
         raise InventoryError("--final-commit must be a full lowercase commit ID")
     validate_remote_url(remote_url, allow_noncanonical_remote)
-    repository_identity = validate_repository(repository, remote_url)
+    if git_executable is None:
+        raise InventoryError("an absolute Git executable is required")
+    runner = GitRunner(git_executable)
+    try:
+        return collect_inventory_with_runner(
+            repository,
+            final_commit,
+            remote_url,
+            max_scanned_object_bytes,
+            large_blob_bytes,
+            runner,
+            tool_sha256,
+        )
+    finally:
+        runner.close()
+
+
+def collect_inventory_with_runner(
+    repository,
+    final_commit,
+    remote_url,
+    max_scanned_object_bytes,
+    large_blob_bytes,
+    runner,
+    tool_sha256,
+):
+    repository_identity = validate_repository(repository, remote_url, runner=runner)
 
     scan_budget = {"bytes": 0}
-    refs, coverage_errors = collect_refs(repository)
+    refs, coverage_errors = collect_refs(repository, runner=runner)
     if not refs:
         raise InventoryError("the repository contains no commit refs")
-    remote_refs = collect_remote_refs(repository, remote_url)
+    remote_refs = collect_remote_refs(repository, remote_url, runner=runner)
     local_ref_objects = {ref["name"]: ref["object_id"] for ref in refs}
+    ref_displays = {ref["name"]: ref["display_name"] for ref in refs}
     for ref_name, object_id in sorted(remote_refs.items()):
         if ref_name not in local_ref_objects:
-            coverage_errors.append(f"remote ref is missing locally: {ref_name}")
+            coverage_errors.append(
+                f"remote ref is missing locally: {display_ref_name(ref_name)}"
+            )
         elif local_ref_objects[ref_name] != object_id:
-            coverage_errors.append(f"remote ref differs locally: {ref_name}")
+            coverage_errors.append(f"remote ref differs locally: {ref_displays[ref_name]}")
     for ref_name in sorted(set(local_ref_objects) - set(remote_refs)):
-        coverage_errors.append(f"local ref is not advertised remotely: {ref_name}")
+        coverage_errors.append(
+            f"local ref is not advertised remotely: {ref_displays[ref_name]}"
+        )
     if coverage_errors:
         raise InventoryError("local refs do not exactly match the remote advertisement")
+    validate_object_database(repository, runner=runner)
     refs, ref_errors = hydrate_refs(
-        repository, refs, max_scanned_object_bytes, scan_budget
+        repository, refs, max_scanned_object_bytes, scan_budget, runner=runner
     )
     coverage_errors.extend(ref_errors)
 
-    commits = collect_commits(repository, refs)
+    commits = collect_commits(repository, refs, runner=runner)
     if final_commit not in commits:
         raise InventoryError("--final-commit is not reachable from the inventoried refs")
     metadata = []
     commit_sizes = {}
     unscanned_metadata_objects = []
     for commit in commits:
-        size = int(git_text(repository, "cat-file", "-s", commit).strip())
+        size = int(
+            git_text(repository, "cat-file", "-s", commit, runner=runner).strip()
+        )
         commit_sizes[commit] = size
         if size > max_scanned_object_bytes:
             coverage_errors.append(f"commit metadata exceeds the content scan cap: {commit}")
@@ -719,7 +986,7 @@ def collect_inventory(
                     "aggregate scanned object bytes exceed "
                     f"{MAX_TOTAL_SCANNED_OBJECT_BYTES}"
                 )
-            metadata.append(commit_metadata(repository, commit))
+            metadata.append(commit_metadata(repository, commit, runner=runner))
 
     blob_paths = {}
     submodules = set()
@@ -727,7 +994,7 @@ def collect_inventory(
     historical_tree_entries = 0
     historical_path_bytes = 0
     for commit in commits:
-        entries, path_bytes = tree_entries(repository, commit)
+        entries, path_bytes = tree_entries(repository, commit, runner=runner)
         historical_tree_entries += len(entries)
         historical_path_bytes += path_bytes
         if historical_tree_entries > MAX_HISTORICAL_TREE_ENTRIES:
@@ -753,7 +1020,10 @@ def collect_inventory(
     if len(blob_paths) > MAX_UNIQUE_BLOBS:
         raise InventoryError(f"unique blob count exceeds {MAX_UNIQUE_BLOBS}")
     for object_id, paths in sorted(blob_paths.items()):
-        size = int(git_text(repository, "cat-file", "-s", object_id).strip())
+        path_records = [path_record(path) for path in sorted(paths)]
+        size = int(
+            git_text(repository, "cat-file", "-s", object_id, runner=runner).strip()
+        )
         scanned = size <= max_scanned_object_bytes
         binary = None
         if scanned:
@@ -763,11 +1033,14 @@ def collect_inventory(
                     "aggregate scanned object bytes exceed "
                     f"{MAX_TOTAL_SCANNED_OBJECT_BYTES}"
                 )
-            data = git(repository, "cat-file", "blob", object_id, text=False).stdout
-            if len(data) != size:
-                raise InventoryError(f"short read for blob {object_id}")
+            data = read_git_object(
+                repository, "blob", object_id, size, runner=runner
+            )
             binary = is_binary(data)
-            found, truncated = secret_candidates(data, object_id, "blob", paths)
+            display_paths = [record["display"] for record in path_records]
+            found, truncated = secret_candidates(
+                data, object_id, "blob", display_paths
+            )
             candidates.extend(found)
             if len(candidates) > MAX_TOTAL_SECRET_CANDIDATES:
                 raise InventoryError(
@@ -775,17 +1048,24 @@ def collect_inventory(
                 )
             if truncated:
                 truncated_secret_scans.append(
-                    {"object_id": object_id, "object_kind": "blob", "paths": sorted(paths)}
+                    {
+                        "object_id": object_id,
+                        "object_kind": "blob",
+                        "paths": display_paths,
+                    }
                 )
         blobs.append(
             {
                 "object_id": object_id,
-                "paths": sorted(paths),
+                "paths": [record["display"] for record in path_records],
+                "path_records": path_records,
                 "size": size,
                 "scanned": scanned,
                 "binary": binary,
                 "large": size >= large_blob_bytes,
-                "generated_candidate": any(is_generated_path(path) for path in paths),
+                "generated_candidate": any(
+                    record["generated_candidate"] for record in path_records
+                ),
             }
         )
 
@@ -794,7 +1074,7 @@ def collect_inventory(
         paths = [f"commit:{commit}"]
         if size > max_scanned_object_bytes:
             continue
-        data = git(repository, "cat-file", "commit", commit, text=False).stdout
+        data = read_git_object(repository, "commit", commit, size, runner=runner)
         found, truncated = secret_candidates(data, commit, "commit", paths)
         candidates.extend(found)
         if len(candidates) > MAX_TOTAL_SECRET_CANDIDATES:
@@ -809,7 +1089,7 @@ def collect_inventory(
     tag_paths = {}
     for ref in refs:
         if ref["object_type"] == "tag":
-            tag_paths.setdefault(ref["object_id"], []).append(ref["name"])
+            tag_paths.setdefault(ref["object_id"], []).append(ref["display_name"])
     for object_id, paths in sorted(tag_paths.items()):
         size = next(
             ref["tag_size"]
@@ -821,7 +1101,7 @@ def collect_inventory(
                 {"object_id": object_id, "object_kind": "tag", "paths": paths, "size": size}
             )
             continue
-        data = git(repository, "cat-file", "tag", object_id, text=False).stdout
+        data = read_git_object(repository, "tag", object_id, size, runner=runner)
         found, truncated = secret_candidates(data, object_id, "tag", paths)
         candidates.extend(found)
         if len(candidates) > MAX_TOTAL_SECRET_CANDIDATES:
@@ -841,9 +1121,15 @@ def collect_inventory(
         and not unscanned_metadata_objects
         and not truncated_secret_scans
     )
-    return {
+    inventory = {
         "tool_version": TOOL_VERSION,
+        "tool_sha256": tool_sha256,
         "git_version": repository_identity["git_version"],
+        "git_executable": runner.executable,
+        "git_executable_sha256": runner.executable_sha256,
+        "git_exec_path": runner.exec_path,
+        "git_https_helper": runner.https_helper,
+        "git_https_helper_sha256": runner.https_helper_sha256,
         "object_format": repository_identity["object_format"],
         "repository": str(repository),
         "remote_url": remote_url,
@@ -862,7 +1148,11 @@ def collect_inventory(
         "final_commit": final_commit,
         "blobs": blobs,
         "submodules": [
-            {"path": path, "object_id": object_id}
+            {
+                "path": encode_path(path),
+                "path_sha256": hashlib.sha256(path).hexdigest(),
+                "object_id": object_id,
+            }
             for path, object_id in sorted(submodules)
         ],
         "secret_candidates": sorted(
@@ -885,27 +1175,46 @@ def collect_inventory(
         "max_scanned_object_bytes": max_scanned_object_bytes,
         "large_blob_bytes": large_blob_bytes,
         "required_license_files": {
-            path: path in final_paths for path in ("LICENSE-APACHE", "LICENSE-MIT")
+            path: path.encode() in final_paths
+            for path in ("LICENSE-APACHE", "LICENSE-MIT")
         },
     }
+    return inventory
 
 
 def markdown(value):
     value = html.escape(redact_secret_text(safe_text(value)), quote=False)
     return (
         value.replace("\\", "\\\\")
+        .replace("://", ":\\/\\/")
+        .replace("www.", "www\\.")
+        .replace("@", "&#64;")
+        .replace("*", "\\*")
+        .replace("_", "\\_")
+        .replace("~", "\\~")
         .replace("|", "\\|")
         .replace("!", "\\!")
         .replace("[", "\\[")
         .replace("]", "\\]")
         .replace("(", "\\(")
         .replace(")", "\\)")
+        .replace("`", "\\`")
         .replace("\n", " ")
     )
 
 
 def inline_code(value):
-    return f"`{markdown(value).replace('`', '&#96;')}`"
+    value = redact_secret_text(safe_text(value)).replace("\n", " ")
+    longest_run = max((len(run) for run in re.findall(r"`+", value)), default=0)
+    delimiter = "`" * (longest_run + 1)
+    padding = (
+        " "
+        if value.startswith("`")
+        or value.endswith("`")
+        or (value.startswith(" ") and value.endswith(" "))
+        else ""
+    )
+    return f"{delimiter}{padding}{value}{padding}{delimiter}"
 
 
 def table(lines, headers, rows):
@@ -943,8 +1252,10 @@ def render_report(inventory, invocation):
 
     path_versions = {}
     for blob in blobs:
-        for path in blob["paths"]:
-            path_versions.setdefault(path, []).append(blob)
+        for record in blob["path_records"]:
+            path_versions.setdefault(
+                record["identity"], {"record": record, "versions": []}
+            )["versions"].append(blob)
 
     lines = [
         "# W-025 Reachable-History Inventory",
@@ -988,7 +1299,7 @@ def render_report(inventory, invocation):
         ["Ref", "Type", "Object", "Peeled commit"],
         [
             (
-                ref["name"],
+                ref["display_name"],
                 ref["object_type"],
                 ref["object_id"],
                 ref["commit"] or "-",
@@ -1005,7 +1316,7 @@ def render_report(inventory, invocation):
             ["Ref", "Tagger", "Tagger email", "Tagger date", "Subject"],
             [
                 (
-                    ref["name"],
+                    ref["display_name"],
                     ref["tag_metadata"]["tagger_name"],
                     ref["tag_metadata"]["tagger_email"],
                     ref["tag_metadata"]["tagger_date"],
@@ -1065,13 +1376,17 @@ def render_report(inventory, invocation):
         ],
         [
             (
-                path,
-                len(versions),
-                max(blob["size"] for blob in versions),
-                binary_label(versions),
-                "yes" if any(blob["generated_candidate"] for blob in versions) else "no",
+                item["record"]["display"],
+                len(item["versions"]),
+                max(blob["size"] for blob in item["versions"]),
+                binary_label(item["versions"]),
+                "yes"
+                if item["record"]["generated_candidate"]
+                else "no",
             )
-            for path, versions in sorted(path_versions.items())
+            for _, item in sorted(
+                path_versions.items(), key=lambda pair: pair[1]["record"]["display"]
+            )
         ],
     )
 
@@ -1156,7 +1471,11 @@ def render_report(inventory, invocation):
         lines.extend(["None.", ""])
 
     lines.extend(["### License, notice, and provenance paths", ""])
-    review_paths = [path for path in path_versions if is_review_document(path)]
+    review_paths = [
+        item["record"]["display"]
+        for item in path_versions.values()
+        if item["record"]["review_document"]
+    ]
     if review_paths:
         table(lines, ["Path (percent-encoded bytes)"], [(path,) for path in sorted(review_paths)])
     else:
@@ -1177,7 +1496,7 @@ def render_report(inventory, invocation):
     )
     if inventory["submodules"]:
         lines.extend(
-            f"- `{entry['path']}` at `{entry['object_id']}`"
+            f"- {inline_code(entry['path'])} at {inline_code(entry['object_id'])}"
             for entry in inventory["submodules"]
         )
     else:
@@ -1209,7 +1528,13 @@ def render_report(inventory, invocation):
             "## Tooling And Reproduction",
             "",
             f"- Inventory tool version: {inventory['tool_version']}",
+            f"- Inventory tool SHA-256: {inline_code(inventory['tool_sha256'])}",
             f"- Git: {inline_code(inventory['git_version'])}",
+            f"- Git executable: {inline_code(inventory['git_executable'])}",
+            f"- Git executable SHA-256: {inline_code(inventory['git_executable_sha256'])}",
+            f"- Git helper directory: {inline_code(inventory['git_exec_path'])}",
+            f"- Git HTTPS helper: {inline_code(inventory['git_https_helper'])}",
+            f"- Git HTTPS helper SHA-256: {inline_code(inventory['git_https_helper_sha256'])}",
             f"- Python: {inline_code(platform.python_version())}",
             f"- Invocation: {inline_code(invocation)}",
             "- Mirror acquisition: `git clone --mirror <remote> <isolated-mirror>`",
@@ -1227,6 +1552,11 @@ def render_report(inventory, invocation):
 
 def write_report(path, contents):
     path = Path(path)
+    missing_directories = []
+    parent = path.parent
+    while not parent.exists():
+        missing_directories.append(parent)
+        parent = parent.parent
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = None
     try:
@@ -1244,6 +1574,17 @@ def write_report(path, contents):
             os.fsync(temporary.fileno())
         os.replace(temporary_path, path)
         temporary_path = None
+        directories_to_sync = [path.parent]
+        directories_to_sync.extend(
+            directory.parent for directory in missing_directories
+        )
+        for directory in dict.fromkeys(directories_to_sync):
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            directory_fd = os.open(directory, directory_flags)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
@@ -1254,6 +1595,7 @@ def parse_args(arguments):
         description="Inventory commit histories reachable from local refs and compare remote refs."
     )
     parser.add_argument("--repository", default=".")
+    parser.add_argument("--git-executable", required=True)
     parser.add_argument("--remote-url", required=True)
     parser.add_argument("--final-commit", required=True)
     parser.add_argument("--report", required=True)
@@ -1281,6 +1623,7 @@ def main(arguments=None):
             parsed.remote_url,
             parsed.max_scanned_object_bytes,
             parsed.large_blob_bytes,
+            git_executable=parsed.git_executable,
         )
         invocation = shlex.join(
             [
@@ -1288,6 +1631,8 @@ def main(arguments=None):
                 "ci/inventory-history.py",
                 "--repository",
                 "<isolated-mirror>",
+                "--git-executable",
+                parsed.git_executable,
                 "--remote-url",
                 parsed.remote_url,
                 "--final-commit",
