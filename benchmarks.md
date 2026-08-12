@@ -21,9 +21,9 @@ The corpus harness reports:
 
 - maximum JSON nesting and members in one object;
 - total JSON values and decoded member-name bytes;
-- preflight and JSON-LD/RDF stage time;
+- per-file preflight and JSON-LD/RDF stage time, summed for corpus reports;
 - emitted quads and retained RDF summary bytes;
-- total corpus time and process maximum RSS.
+- whole-harness wall time and process maximum RSS.
 
 The resource-stress harness generates 16 deterministic inputs for structural
 width, depth, value density, decoded-name size, contexts, object order, RDF lists,
@@ -64,7 +64,15 @@ the verified commit and file identity. Resource-stress reports must share genera
 version, case identity, structural metrics, and outcomes. WASM reports must share
 the module SHA-256.
 
-## Structural Baseline
+## Corpus Workloads And Structure
+
+Each row is a separate workload with a fixed file set. At corpus baseline revision
+`7a69e58`, repository-owned fixtures come from
+`crates/cxf-ingest-probe/tests/fixtures`; the current tree stores them under
+`crates/cxf-json/tests/fixtures`. OCE CXF fixtures come from
+`crates/oce-cxf/tests/fixtures` in the pinned Open Control Engine checkout; the
+producer corpus comes from that checkout's
+`third_party/modelica-buildings-cdl/cxf` directory.
 
 | Corpus | Files | Total bytes | Largest file | Max depth | Max members | JSON values | Member-name bytes | Quads | RDF term bytes median (range) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -78,22 +86,30 @@ processor-generated blank-node identifiers. The metric is not a canonical graph
 size. The one expected remote-context failure contributes JSON structure and
 timing but no quads or RDF term bytes.
 
-## Native Baseline
+## Corpus Harness Timing
 
-Times are microseconds. Each cell reports the median and minimum-to-maximum range
-across five runs. Stage throughput is calculated for each run as total corpus
-bytes divided by that run's combined preflight and JSON-LD/RDF time, then
-aggregated. Stage time includes owned per-file result construction and
-the `SourceDocument` copy. Corpus time includes the measured stages, discovery,
-two Git verification passes, blob reads, and inter-file aggregation. It excludes
-final JSON serialization. Throughput uses decimal megabytes: 1 MB is 1,000,000
-bytes.
+Each timing and memory cell reports the median and minimum-to-maximum range across
+five independent process executions. A stage value is the sum of that stage's
+per-file timers for one complete workload, not a per-file median. Stage time
+includes owned per-file result construction and the `SourceDocument` copy.
 
-| Corpus | Preflight | JSON-LD/RDF | Stage throughput | Corpus time | Maximum RSS |
-|---|---:|---:|---:|---:|---:|
-| Repository-owned fixtures | 75 (68-249) | 323 (310-895) | 14.3 MB/s (5.0-15.2) | 89,626 (83,889-99,514) | 7,929,856 bytes (7,913,472-7,929,856) |
-| OCE CXF fixtures | 7,875 (7,388-8,357) | 38,730 (38,098-40,628) | 54.2 MB/s (51.4-55.4) | 917,663 (873,629-944,014) | 12,730,368 bytes (12,468,224-12,926,976) |
-| Pinned Buildings producer corpus | 5,248 (5,034-5,535) | 25,057 (24,148-25,768) | 70.2 MB/s (67.5-72.4) | 292,072 (286,993-329,086) | 8,847,360 bytes (8,716,288-9,191,424) |
+Harness wall time starts at `qualify` function entry and ends after the
+report is assembled. It includes argument processing, corpus discovery,
+canonicalization, two Git verification passes, blob reads, measured stages, and
+inter-file aggregation. It excludes final JSON serialization. Process maximum RSS
+covers the same full process and is not parser-only memory.
+
+Stage throughput is calculated per run as total input bytes divided by combined
+preflight and JSON-LD/RDF time. MB/s uses decimal megabytes; RSS uses binary MiB.
+The three rows differ in file count, byte size, and semantic shape. Compare a row
+only with the same workload, method, and environment; cross-row wall and stage
+times are not parser-speed comparisons.
+
+| Workload | Files | Input bytes | Summed preflight (ms) | Summed JSON-LD/RDF (ms) | Stage throughput (MB/s) | Harness wall (ms) | Process max RSS (MiB) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Repository-owned fixtures | 8 | 5,738 | 0.075 (0.068-0.249) | 0.323 (0.310-0.895) | 14.3 (5.0-15.2) | 89.626 (83.889-99.514) | 7.56 (7.55-7.56) |
+| OCE CXF fixtures | 164 | 2,519,687 | 7.875 (7.388-8.357) | 38.730 (38.098-40.628) | 54.2 (51.4-55.4) | 917.663 (873.629-944.014) | 12.14 (11.89-12.33) |
+| Pinned Buildings producer corpus | 44 | 2,114,507 | 5.248 (5.034-5.535) | 25.057 (24.148-25.768) | 70.2 (67.5-72.4) | 292.072 (286.993-329.086) | 8.44 (8.31-8.77) |
 
 ## Resource-Stress Baseline
 
@@ -184,7 +200,8 @@ shared this workload identity:
 
 Times are microseconds. Each value reports the median and minimum-to-maximum range
 across five runs. Throughput uses decimal megabytes. Maximum RSS covers the whole
-process and does not measure parser allocations or live retained memory.
+process; it cannot attribute resident allocations to the parser or distinguish
+live retained memory.
 
 | Elapsed | Throughput | Maximum RSS |
 |---:|---:|---:|
@@ -259,13 +276,14 @@ The native commands require macOS `/usr/bin/time -l`; RSS output and process
 timing are comparable only on an equivalent environment. Run each baselined
 workload five times. Replace `RUN` in the commands below with the run number. Keep
 standard output and `/usr/bin/time` output separate so
-`ci/summarize-benchmarks.py` can aggregate them. Revision-bound metric builds and
-runs reject a revision that differs from `HEAD` or a worktree with tracked or
-untracked changes. The production WASM command remains a smoke run; no five-run
-production WASM baseline is recorded.
+`ci/summarize-benchmarks.py` can aggregate them. Revision-bound metric builds
+reject a revision that differs from `HEAD` or a worktree with tracked or untracked
+changes. Corpus runs verify the requested origin, commit, and selected tree paths,
+but do not independently reject unrelated dirty files. The production WASM
+command remains a smoke run; no five-run production WASM baseline is recorded.
 
-Create detached worktrees for both historical instrumentation revisions and the
-production semantic revision, plus one absolute evidence directory. The commands
+Create detached worktrees for both historical instrumentation revisions and both
+production semantic revisions, plus one absolute evidence directory. The commands
 below use these variables:
 
 ```bash
@@ -273,14 +291,19 @@ CXF_JSON="$(git rev-parse --show-toplevel)"
 EVIDENCE_DIR="$CXF_JSON/target/benchmark-evidence"
 CORPUS_REVISION=7a69e58e821eb5ebf36a55dcc67d673ec11cd7a9
 STRESS_REVISION=021b8d611fbdc488eeb09181ca9295e83aa6ab27
-SEMANTIC_REVISION=4994d73accdd18ec439108e069b565199e30ba6e
+SEMANTIC_END_TO_END_REVISION=3b56d18c5161f00a5429e2e11f99baec30e72f00
+SEMANTIC_STAGE_REVISION=4994d73accdd18ec439108e069b565199e30ba6e
 CORPUS_WORKTREE="/tmp/cxf-json-${CORPUS_REVISION}"
 STRESS_WORKTREE="/tmp/cxf-json-${STRESS_REVISION}"
-SEMANTIC_WORKTREE="/tmp/cxf-json-${SEMANTIC_REVISION}"
+SEMANTIC_END_TO_END_WORKTREE="/tmp/cxf-json-${SEMANTIC_END_TO_END_REVISION}"
+SEMANTIC_STAGE_WORKTREE="/tmp/cxf-json-${SEMANTIC_STAGE_REVISION}"
 mkdir -p "$EVIDENCE_DIR"
 git -C "$CXF_JSON" worktree add --detach "$CORPUS_WORKTREE" "$CORPUS_REVISION"
 git -C "$CXF_JSON" worktree add --detach "$STRESS_WORKTREE" "$STRESS_REVISION"
-git -C "$CXF_JSON" worktree add --detach "$SEMANTIC_WORKTREE" "$SEMANTIC_REVISION"
+git -C "$CXF_JSON" worktree add --detach \
+  "$SEMANTIC_END_TO_END_WORKTREE" "$SEMANTIC_END_TO_END_REVISION"
+git -C "$CXF_JSON" worktree add --detach \
+  "$SEMANTIC_STAGE_WORKTREE" "$SEMANTIC_STAGE_REVISION"
 ```
 
 Build the corpus harness from its detached worktree and run the owned corpus:
@@ -374,13 +397,35 @@ python3 "$STRESS_WORKTREE/ci/summarize-benchmarks.py" wasm \
   "$EVIDENCE_DIR"/wasm-{1,2,3,4,5}.json
 ```
 
-Build and measure the private production semantic path from its recorded baseline
-revision:
+Build and measure the first end-to-end production semantic baseline:
 
 ```bash
 (
-  cd "$SEMANTIC_WORKTREE"
-  CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="$SEMANTIC_REVISION" \
+  cd "$SEMANTIC_END_TO_END_WORKTREE"
+  CXF_JSON_SEMANTIC_HARNESS=1 \
+    CXF_BENCHMARK_REVISION="$SEMANTIC_END_TO_END_REVISION" \
+    cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
+      --no-default-features --features production-semantic-harness \
+      --example report_production_semantic
+  stat -f %z target/release/examples/report_production_semantic \
+    > "$EVIDENCE_DIR/semantic-end-to-end-artifact-size.txt"
+  for run in 1 2 3 4 5; do
+    LC_ALL=C /usr/bin/time -l target/release/examples/report_production_semantic \
+      > "$EVIDENCE_DIR/semantic-end-to-end-${run}.json" \
+      2> "$EVIDENCE_DIR/semantic-end-to-end-${run}.time"
+  done
+  python3 ci/summarize-benchmarks.py semantic-ingestion \
+    "$EVIDENCE_DIR"/semantic-end-to-end-{1,2,3,4,5}.json \
+    --times "$EVIDENCE_DIR"/semantic-end-to-end-{1,2,3,4,5}.time
+)
+```
+
+Build and measure the native stage baseline from its recorded revision:
+
+```bash
+(
+  cd "$SEMANTIC_STAGE_WORKTREE"
+  CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="$SEMANTIC_STAGE_REVISION" \
     cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
       --no-default-features --features production-semantic-harness \
       --example report_production_semantic
@@ -395,11 +440,11 @@ revision:
     "$EVIDENCE_DIR"/semantic-{1,2,3,4,5}.json \
     --times "$EVIDENCE_DIR"/semantic-{1,2,3,4,5}.time
 
-  CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="$SEMANTIC_REVISION" \
+  CXF_JSON_SEMANTIC_HARNESS=1 CXF_BENCHMARK_REVISION="$SEMANTIC_STAGE_REVISION" \
     cargo +1.97.1 build --release --locked -p cxf-ingest-probe \
       --no-default-features --features production-semantic-harness \
       --example wasm_production_semantic --target wasm32-unknown-unknown
-  CXF_BENCHMARK_REVISION="$SEMANTIC_REVISION" node ci/run-wasm-smoke.mjs \
+  CXF_BENCHMARK_REVISION="$SEMANTIC_STAGE_REVISION" node ci/run-wasm-smoke.mjs \
     target/wasm32-unknown-unknown/release/examples/wasm_production_semantic.wasm \
     --metrics
 )
