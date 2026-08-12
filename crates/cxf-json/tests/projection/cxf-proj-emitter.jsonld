@@ -1,0 +1,69 @@
+{
+  "@context": {
+    "S231P": "http://data.ashrae.org/S231P#",
+    "ex": "https://example.test/cxf#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "@graph": [
+    {
+      "@id": "ex:Project.RootBlock",
+      "@type": "S231P:Block",
+      "S231P:label": "RootBlock",
+      "S231P:containsBlock": { "@id": "ex:Project.RootBlock.gain" },
+      "S231P:hasInput": { "@id": "ex:Project.RootBlock.u" },
+      "S231P:hasOutput": { "@id": "ex:Project.RootBlock.y" }
+    },
+    {
+      "@id": "ex:Project.RootBlock.gain",
+      "@type": "ex:Buildings.Controls.OBC.CDL.Reals.MultiplyByParameter",
+      "S231P:accessSpecifier": "public",
+      "S231P:description": "Constant gain",
+      "S231P:documentation": "info=<html><p>Owned test documentation.</p></html>",
+      "S231P:graphics": "Placement(transformation(extent={{-60,-50},{-40,-30}}))",
+      "S231P:hasInstance": [
+        { "@id": "ex:Project.RootBlock.gain.k" },
+        { "@id": "ex:Project.RootBlock.gain.u" },
+        { "@id": "ex:Project.RootBlock.gain.y" }
+      ],
+      "S231P:label": "gain"
+    },
+    {
+      "@id": "ex:Project.RootBlock.gain.k",
+      "S231P:isFinal": true,
+      "S231P:value": "k"
+    },
+    {
+      "@id": "ex:Project.RootBlock.gain.u",
+      "S231P:isConnectedTo": { "@id": "ex:Project.RootBlock.u" }
+    },
+    {
+      "@id": "ex:Project.RootBlock.gain.y",
+      "S231P:isConnectedTo": { "@id": "ex:Project.RootBlock.y" }
+    },
+    {
+      "@id": "ex:Project.RootBlock.k",
+      "@type": "S231P:Parameter",
+      "S231P:accessSpecifier": "public",
+      "S231P:isOfDataType": { "@id": "S231P:Real" },
+      "S231P:label": "k",
+      "S231P:value": { "@value": "0.5", "@type": "xsd:double" }
+    },
+    {
+      "@id": "ex:Project.RootBlock.count",
+      "@type": "S231P:Parameter",
+      "S231P:isOfDataType": { "@id": "S231P:Integer" },
+      "S231P:value": 2
+    },
+    {
+      "@id": "ex:Project.RootBlock.u",
+      "@type": "S231P:RealInput",
+      "S231P:isOfDataType": { "@id": "S231P:Real" },
+      "S231P:isConnectedTo": { "@id": "ex:Project.RootBlock.gain.u" }
+    },
+    {
+      "@id": "ex:Project.RootBlock.y",
+      "@type": "S231P:RealOutput",
+      "S231P:isOfDataType": { "@id": "S231P:Real" }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "@context": {
+    "S231P": "http://data.ashrae.org/S231P#",
+    "ex": "https://example.test/cxf#"
+  },
+  "@graph": [
+    {
+      "@id": "ex:SeriesFan.Controller.venStd",
+      "S231P:accessSpecifier": "public",
+      "S231P:description": "Ventilation standard enumeration parameter",
+      "S231P:label": "venStd"
+    },
+    {
+      "@id": "ex:SeriesFan.Controller.freezeStat",
+      "S231P:accessSpecifier": "public",
+      "S231P:label": "freezeStat",
+      "S231P:value": "ex:Types.FreezeProtectionStages.stage1"
+    }
+  ]
+}

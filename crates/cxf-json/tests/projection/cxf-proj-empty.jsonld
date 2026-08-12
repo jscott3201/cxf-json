@@ -1,0 +1,18 @@
+{
+  "@context": {
+    "S231P": "http://data.ashrae.org/S231P#",
+    "ex": "https://example.test/cxf#"
+  },
+  "@graph": [
+    {
+      "@id": "ex:Interfaces.RealBus",
+      "@type": "S231P:Block"
+    },
+    {
+      "@id": "ex:Interfaces.RealBus.u",
+      "@type": "S231P:Parameter",
+      "S231P:isOfDataType": { "@id": "S231P:Real" },
+      "S231P:label": "u"
+    }
+  ]
+}

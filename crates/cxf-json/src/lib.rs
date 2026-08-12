@@ -15,6 +15,8 @@ mod contract;
 mod json;
 #[allow(dead_code)]
 mod ordered;
+#[allow(dead_code)]
+mod projection;
 #[cfg(feature = "semantic-ingestion")]
 #[allow(dead_code)]
 mod semantic;
