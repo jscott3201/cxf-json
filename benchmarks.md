@@ -66,8 +66,10 @@ the module SHA-256.
 
 ## Corpus Workloads And Structure
 
-Each row is a separate workload with a fixed file set. Repository-owned fixtures
-come from `crates/cxf-ingest-probe/tests/fixtures`; OCE CXF fixtures come from
+Each row is a separate workload with a fixed file set. At corpus baseline revision
+`7a69e58`, repository-owned fixtures come from
+`crates/cxf-ingest-probe/tests/fixtures`; the current tree stores them under
+`crates/cxf-json/tests/fixtures`. OCE CXF fixtures come from
 `crates/oce-cxf/tests/fixtures` in the pinned Open Control Engine checkout; the
 producer corpus comes from that checkout's
 `third_party/modelica-buildings-cdl/cxf` directory.
