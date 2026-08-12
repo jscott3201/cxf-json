@@ -65,7 +65,8 @@ IRI, JSON-structure, diagnostics, and admission foundations. A change to public
 contract behavior must update the profile version, enforce tests, and add or
 supersede one ADR in [`../spec/adr/`](../spec/adr/).
 
-- **Breaking pre-1.0:** increment the profile minor version.
+- **Breaking pre-1.0:** increment the profile minor version and reset the patch
+  version to zero.
 - **Additive behavior before 1.0:** increment the patch version.
 - **Clarification:** increment the patch version unless CI can prove the change
   is whitespace-only and no public contract file changed.

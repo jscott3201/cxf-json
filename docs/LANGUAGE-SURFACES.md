@@ -17,10 +17,10 @@ fictional Python or JavaScript example, because no such adapter exists.
 ## Status
 
 The first supported bindings belong after a supported Rust parse function and
-typed CXF document exist. Until then, examples should show the contract
-foundations or call planned behavior planned. No code in this repository defines
-a Python package, browser package, Node package, PyO3 module, JavaScript API, or
-public WASM parse entry point.
+typed CXF document exist. Until then, show code only for the current Rust
+contract foundations, and label every planned-host behavior explicitly as
+planned. No code in this repository defines a Python package, browser package,
+Node package, PyO3 module, JavaScript API, or public WASM parse entry point.
 
 ## Rust contract
 
