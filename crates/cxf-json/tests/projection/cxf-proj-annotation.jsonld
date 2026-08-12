@@ -1,0 +1,38 @@
+{
+  "@context": {
+    "S231": "http://data.ashrae.org/S231#",
+    "ex": "http://example.org#"
+  },
+  "@graph": [
+    {
+      "@id": "ex:ExamplePackage.ExternalLoop",
+      "@type": "S231:Block",
+      "S231:label": "ExternalLoop",
+      "S231:hasInstance": [
+        { "@id": "ex:ExamplePackage.ExternalLoop.u" },
+        { "@id": "ex:ExamplePackage.ExternalLoop.externalGain" },
+        { "@id": "ex:ExamplePackage.ExternalLoop.y" }
+      ]
+    },
+    {
+      "@id": "ex:ExamplePackage.ExternalLoop.u",
+      "@type": "S231:RealInput",
+      "S231:graphics": "Placement(transformation(extent={{-10,-20},{30,10}})))",
+      "S231:conditionalExpression": "not undefined",
+      "S231:defaultValue": { "@value": "0", "@type": "S231:Real" }
+    },
+    {
+      "@id": "ex:ExamplePackage.ExternalLoop.externalGain",
+      "@type": ["S231:ExtensionBlock", "ex:Vendor.CustomGain"],
+      "S231:graphics": "Placement(transformation(extent={{100,90},{140,130}})))",
+      "S231:hasFmuPath": "vendor/externalLoop/gain.fmu",
+      "S231:controlledDevice": "Heater",
+      "S231:generatePointlist": true,
+      "S231:documentation": "info=<html><p>external gain</p></html>"
+    },
+    {
+      "@id": "ex:FromModelica.CustomPWithLimiterExtensionBlock.y",
+      "@type": "S231:RealOutput"
+    }
+  ]
+}

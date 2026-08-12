@@ -19,6 +19,17 @@ fixture bytes; these fixtures comply. They are covered by the repository's
 benchmark corpus under `crates/cxf-json/tests/fixtures/` so the corpus
 baseline recorded in `benchmarks.md` remains revision-honest.
 
+W-013-C2 (`_research/W013-C2-ATTRIBUTES-UNITS-ANNOTATION-SURFACE.md`,
+local and Git-ignored) added `cxf-proj-units.jsonld` and
+`cxf-proj-annotation.jsonld` on 2026-08-12 under the same license and
+exclusion terms. Their member shapes follow factual producer-output
+observations recorded in the survey (QUDT prefix declarations, the 27-entry
+unit mapping and `S231:<raw>` fallback shape, `xsd:decimal` typed-literal
+`nominal` values, string graphics with unbalanced-paren damage, and the
+register-documented `not undefined` conditional expression); all
+identifiers, labels, descriptions, values, and path strings were authored
+for this repository.
+
 SHA-256 checksums recorded at authoring:
 
 - `8a12848e3d58d0412098ebfb135f6ef7fecacda20cf511da8595c10e8282eef8` `cxf-proj-artifact.jsonld`
@@ -28,3 +39,5 @@ SHA-256 checksums recorded at authoring:
 - `2920df34c040b6965d422fa4439b59423847f75bedcd960cac3810850f6f673e` `cxf-proj-legacy-https.jsonld`
 - `35335a71ba3d52c8a6ab47df87b172092d331398a7ca9d2674215e603f938abe` `cxf-proj-specform.jsonld`
 - `d69d186922e4cb394c555ba64c02c4b9e65d35ab7bcaf213b0917a2e9b43ca68` `cxf-proj-weak.jsonld`
+- `e8c0f137028d24cb03e7e51b0cb898e2d5cc16526716552b92fbb2be7931ac1f` `cxf-proj-units.jsonld`
+- `70456176810b2009cb31714628a9d24029a58d259a192d159821c96101dd8b6f` `cxf-proj-annotation.jsonld`
