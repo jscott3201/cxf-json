@@ -11,8 +11,10 @@
 //! internal identity (register rows C-001, C-002, C-016). Embedded
 //! reference-object members beyond their first string `@id` and unhandled
 //! keyword shapes are retained verbatim as extension records rather than
-//! silently dropped. All behavior here remains crate-private; profile 0.1.3
-//! public exports are unchanged.
+//! silently dropped. `@included` members collect nodes like `@graph`;
+//! node-scoped `@context` members leave evidence but are never applied —
+//! compacted registration follows the root context only. All behavior here
+//! remains crate-private; profile 0.1.4 public exports are unchanged.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -334,7 +336,9 @@ fn resolve_data_type(spelling: &str, context: &ActiveContext) -> Option<DataType
 pub(crate) enum ProjectionCode {
     /// Root value is not a JSON object, so node collection cannot start.
     RootNotObject,
-    /// Node object carries no `@type` at all (C-008 posture).
+    /// Node object has no usable type spelling: `@type` was absent or every
+    /// authored shape failed to yield one (C-008 posture covers the former;
+    /// malformed shapes additionally leave verbatim extension records).
     WeaklyTypedNode,
     /// Node carries registered class terms of conflicting node classes.
     ConflictingTypes,
@@ -687,8 +691,9 @@ pub(crate) enum NodeClass {
     EnumerationType,
     DataType,
     Text,
-    /// No `@type` was authored (C-008; pinned producer output emits such
-    /// nodes for nested instances).
+    /// No usable `@type` spelling (absent, or every authored shape unusable;
+    /// C-008 records the common pinned-producer case of nested instances
+    /// carrying no type).
     WeakUntyped,
 }
 
@@ -978,11 +983,16 @@ pub(crate) fn project(document: OrderedDocument) -> Projection {
         }
     }
 
-    for node_value in collector.nodes {
+    let root_position = if looks_like_node(members) {
+        collector.nodes.len().checked_sub(1)
+    } else {
+        None
+    };
+    for (position, node_value) in collector.nodes.into_iter().enumerate() {
         let OrderedValue::Object { members, token } = node_value else {
             continue;
         };
-        builder.parse_node(members, token.clone());
+        builder.parse_node(members, token.clone(), root_position == Some(position));
     }
 
     builder.resolve_edges();
@@ -1075,7 +1085,7 @@ impl ProjectionBuilder<'_> {
         }
     }
 
-    fn parse_node(&mut self, members: &[OrderedMember], token: Range<usize>) {
+    fn parse_node(&mut self, members: &[OrderedMember], token: Range<usize>, is_root: bool) {
         let index = self.nodes.len();
         let mut id_spelling: Option<Arc<str>> = None;
         let mut type_spellings: Vec<Arc<str>> = Vec::new();
@@ -1109,7 +1119,22 @@ impl ProjectionBuilder<'_> {
                         &mut extensions,
                     );
                 }
-                _ if name.starts_with('@') => {}
+                // `@graph`, `@included`, and the root `@context` are consumed
+                // structurally (node collection and prefix gating); every
+                // other JSON-LD keyword member — including node-scoped
+                // contexts the projection deliberately does not apply — is
+                // retained verbatim as extension evidence.
+                "@graph" | "@included" => {}
+                "@context" if is_root => {}
+                _ if name.starts_with('@') => {
+                    let record = self.record_extension(
+                        Some(index),
+                        &member.name,
+                        member.value.token().clone(),
+                        value_kind(&member.value),
+                    );
+                    extensions.push(record);
+                }
                 _ => match lookup(name, &self.context) {
                     Some(term_id) => {
                         let term = term_id.term();
@@ -1450,7 +1475,6 @@ fn parse_u64(source: &[u8], token: &Range<usize>) -> Option<u64> {
 
 #[derive(Default)]
 struct NodeCollector<'a> {
-    graph_seen: bool,
     nodes: Vec<&'a OrderedValue>,
 }
 
@@ -1458,7 +1482,6 @@ impl<'a> NodeCollector<'a> {
     fn collect_from_members(&mut self, members: &'a [OrderedMember]) {
         for member in members {
             if matches!(&*member.name, "@graph" | "@included") {
-                self.graph_seen = true;
                 self.collect_value(&member.value);
             }
         }
@@ -1480,18 +1503,20 @@ impl<'a> NodeCollector<'a> {
         let OrderedValue::Object { members, .. } = value else {
             return;
         };
-        // Named-graph envelopes: recurse into nested `@graph` members. A pure
-        // envelope without identity is not itself a node; every other object
-        // member is collected even without identity so its content degrades
-        // into weakly typed evidence instead of vanishing.
+        // Envelopes: recurse into nested graph members. Only a *pure*
+        // structural envelope (nested graph members, no identity, no payload)
+        // is itself uncollected; every other object member becomes a node so
+        // anonymous and payload-bearing content degrades into weakly typed
+        // evidence instead of vanishing.
         let mut has_nested_graph = false;
         for member in members {
-            if &*member.name == "@graph" {
+            if matches!(&*member.name, "@graph" | "@included") {
                 has_nested_graph = true;
                 self.collect_value(&member.value);
             }
         }
-        if looks_like_node(members) || !has_nested_graph {
+        let has_payload = members.iter().any(|member| !member.name.starts_with('@'));
+        if looks_like_node(members) || !has_nested_graph || has_payload {
             self.nodes.push(value);
         }
     }
@@ -2474,5 +2499,136 @@ mod regression_tests {
             "exact number spelling survives only through the retained source"
         );
         assert_eq!(projection.source_document().as_bytes(), input.as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod keyword_tests {
+    use super::*;
+    use crate::ParseOptions;
+
+    fn project_str(input: &str) -> Projection {
+        let preflight = crate::json::admit_and_preflight(input.as_bytes(), &ParseOptions::new())
+            .expect("test document must pass preflight");
+        let (document, _) = preflight.into_ordered_document();
+        project(document)
+    }
+
+    #[test]
+    fn unhandled_keyword_members_leave_extension_evidence() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                { "@id": "ex:N", "@type": "S231:Parameter", "@language": "en" }
+              ]
+            }"#,
+        );
+        let node = &projection.nodes()[0];
+        assert_eq!(node.class(), NodeClass::Parameter);
+        assert_eq!(node.extensions().len(), 1);
+        assert_eq!(node.extensions()[0].predicate(), "@language");
+        assert_eq!(projection.metrics().extension_members, 1);
+    }
+
+    #[test]
+    fn node_scoped_context_leaves_evidence_but_is_never_applied() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                {
+                  "@id": "ex:N",
+                  "@type": "S231:Parameter",
+                  "@context": { "S231P": "http://data.ashrae.org/S231P#" },
+                  "S231P:value": "x"
+                }
+              ]
+            }"#,
+        );
+        let node = &projection.nodes()[0];
+        assert_eq!(
+            node.extensions()
+                .iter()
+                .map(ExtensionRecord::predicate)
+                .collect::<Vec<_>>(),
+            ["@context", "S231P:value"],
+            "the node-scoped prefix must not register; both members stay verbatim"
+        );
+        assert!(node.value().is_none());
+    }
+
+    #[test]
+    fn node_level_included_members_become_nodes() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                {
+                  "@id": "ex:N",
+                  "@type": "S231:Block",
+                  "@included": [ { "@id": "ex:M", "@type": "S231:Parameter" } ]
+                }
+              ]
+            }"#,
+        );
+        assert_eq!(projection.nodes().len(), 2);
+        let included = projection
+            .nodes()
+            .iter()
+            .find(|node| node.id_spelling() == Some("ex:M"))
+            .expect("included content must become a node");
+        assert_eq!(included.class(), NodeClass::Parameter);
+        assert_eq!(codes(&projection).len(), 0);
+    }
+
+    fn codes(projection: &Projection) -> Vec<ProjectionCode> {
+        projection
+            .diagnostics()
+            .iter()
+            .map(ProjectionDiagnostic::code)
+            .collect()
+    }
+
+    #[test]
+    fn payload_bearing_envelope_is_collected_as_evidence() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                {
+                  "@graph": [ { "@id": "ex:Inner", "@type": "S231:Block" } ],
+                  "S231:label": "envelope payload"
+                }
+              ]
+            }"#,
+        );
+        assert_eq!(projection.nodes().len(), 2);
+        assert_eq!(
+            projection.nodes()[1].text(Term::Label),
+            Some("envelope payload")
+        );
+        assert_eq!(projection.nodes()[1].class(), NodeClass::WeakUntyped);
+    }
+
+    #[test]
+    fn pure_envelope_is_skipped_but_children_survive() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                {
+                  "@graph": [ { "@id": "ex:Inner", "@type": "S231:Block" } ]
+                }
+              ]
+            }"#,
+        );
+        assert_eq!(projection.nodes().len(), 1);
+        assert_eq!(projection.nodes()[0].id_spelling(), Some("ex:Inner"));
+        assert_eq!(
+            projection.nodes()[0].class(),
+            NodeClass::Block(BlockKind::Abstract)
+        );
+        assert_eq!(codes(&projection).len(), 0);
     }
 }
