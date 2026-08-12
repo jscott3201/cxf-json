@@ -164,6 +164,21 @@ class HistoryInventoryTests(unittest.TestCase):
         self.assertEqual(len(candidates[0]["paths"]), history.MAX_CANDIDATE_PATHS)
         self.assertEqual(candidates[0]["omitted_path_count"], 2)
 
+    def test_bounds_candidate_path_rendering_bytes(self):
+        paths = {"x" * history.MAX_PATH_BYTES + str(index) for index in range(20)}
+
+        candidates, _ = history.secret_candidates(
+            b"gh" + b"p_" + b"A" * 36,
+            "1" * 40,
+            "blob",
+            paths,
+        )
+
+        rendered = ", ".join(candidates[0]["paths"]).encode()
+        self.assertLessEqual(
+            len(rendered), history.MAX_CANDIDATE_PATH_DISPLAY_BYTES + 2 * 20
+        )
+
     def test_redacts_secrets_in_commit_and_tag_subjects(self):
         secret = "password=" + "supersecret"
         self.git("commit", "--allow-empty", "-m", secret)
@@ -716,28 +731,70 @@ class HistoryInventoryTests(unittest.TestCase):
         ):
             history.collect_remote_refs(self.repository, str(self.repository))
 
-    def test_rejects_incomplete_commit_enumeration(self):
+    def test_collects_commits_from_verified_parent_headers(self):
         refs = [{"commit": self.final_commit}]
-        with (
-            mock.patch.object(history, "git_limited", return_value=self.final_commit.encode()),
-            self.assertRaises(history.InventoryError),
-        ):
-            history.collect_commits(self.repository, refs)
+
+        commits, commit_data = history.collect_commits(
+            self.repository, refs, runner=self.runner
+        )
+
+        self.assertEqual(commits, sorted([self.initial_commit, self.final_commit]))
+        self.assertEqual(set(commit_data), set(commits))
+
+    def test_rejects_malformed_commit_parent(self):
+        with self.assertRaises(history.InventoryError):
+            history.commit_parents(b"tree " + b"1" * 40 + b"\nparent malformed\n\n")
 
     def test_rejects_malformed_tree_record(self):
+        with self.assertRaises(history.InventoryError):
+            history.parse_tree_object(b"malformed\0")
+
+    def test_rejects_tree_object_entry_count_before_materializing_all_entries(self):
+        entry = b"100644 path\0" + b"\x11" * 20
         with (
-            mock.patch.object(history, "git_limited", return_value=b"malformed\0"),
-            self.assertRaises(history.InventoryError),
+            mock.patch.object(history, "MAX_TREE_ENTRIES_PER_OBJECT", 1),
+            self.assertRaisesRegex(history.InventoryError, "per object"),
         ):
-            history.tree_entries(self.repository, self.final_commit)
+            history.parse_tree_object(entry + entry)
+
+    def test_rejects_duplicate_annotated_tag_headers(self):
+        data = (
+            b"object " + b"1" * 40 + b"\n"
+            b"object " + b"2" * 40 + b"\n"
+            b"type commit\n"
+            b"tagger Test <test@example.test> 1 +0000\n\nmessage\n"
+        )
+        with self.assertRaisesRegex(history.InventoryError, "duplicate headers"):
+            history.parse_tag_object(data)
+
+    def test_rejects_duplicate_commit_identity_headers(self):
+        data = (
+            b"tree " + b"1" * 40 + b"\n"
+            b"author First <first@example.test> 1 +0000\n"
+            b"author Second <second@example.test> 1 +0000\n"
+            b"committer Test <test@example.test> 1 +0000\n\nmessage\n"
+        )
+        with self.assertRaisesRegex(history.InventoryError, "duplicate identity"):
+            history.commit_metadata("1" * 40, data)
+
+    def test_rejects_noncanonical_tree_mode_and_duplicate_name(self):
+        object_id = b"\x11" * 20
+        with self.assertRaisesRegex(history.InventoryError, "malformed mode"):
+            history.parse_tree_object(b"100600 path\0" + object_id)
+        with self.assertRaisesRegex(history.InventoryError, "malformed mode"):
+            history.parse_tree_object(b"040000 dir\0" + object_id)
+        with self.assertRaisesRegex(history.InventoryError, "malformed entry"):
+            history.parse_tree_object(
+                b"100644 path\0" + object_id + b"100644 path\0" + object_id
+            )
+        with self.assertRaisesRegex(history.InventoryError, "canonically ordered"):
+            history.parse_tree_object(
+                b"100644 b\0" + object_id + b"100644 a\0" + object_id
+            )
 
     def test_rejects_unterminated_tree_output(self):
-        output = f"100644 blob {'1' * 40}\tpath".encode()
-        with (
-            mock.patch.object(history, "git_limited", return_value=output),
-            self.assertRaises(history.InventoryError),
-        ):
-            history.tree_entries(self.repository, self.final_commit)
+        with self.assertRaises(history.InventoryError):
+            history.parse_tree_object(b"100644 path")
 
     def test_rejects_unterminated_local_ref_inventory(self):
         output = f"refs/heads/main\0commit\0{'1' * 40}\0".encode()
@@ -779,18 +836,64 @@ class HistoryInventoryTests(unittest.TestCase):
             history.collect_remote_refs(self.repository, str(self.repository))
 
     def test_rejects_historical_path_above_limit(self):
+        commit_size = int(
+            self.git("cat-file", "-s", self.final_commit).stdout.strip()
+        )
+        commit_data = history.read_git_object(
+            self.repository,
+            "commit",
+            self.final_commit,
+            commit_size,
+            runner=self.runner,
+        )
         with (
             mock.patch.object(history, "MAX_PATH_BYTES", 1),
             self.assertRaises(history.InventoryError),
         ):
             history.tree_entries(
-                self.repository, self.final_commit, runner=self.runner
+                self.repository,
+                commit_data,
+                self.runner,
+                {},
+                {"bytes": 0, "parsed_entries": 0},
+                {"entries": 0, "path_bytes": 0},
             )
 
     def test_rejects_aggregate_tree_entries_above_limit(self):
         with (
             mock.patch.object(history, "MAX_HISTORICAL_TREE_ENTRIES", 1),
             self.assertRaises(history.InventoryError),
+        ):
+            self.inventory()
+
+    def test_rejects_tree_work_before_materializing_all_paths(self):
+        commit_size = int(
+            self.git("cat-file", "-s", self.final_commit).stdout.strip()
+        )
+        commit_data = history.read_git_object(
+            self.repository,
+            "commit",
+            self.final_commit,
+            commit_size,
+            runner=self.runner,
+        )
+        with (
+            mock.patch.object(history, "MAX_HISTORICAL_TREE_ENTRIES", 1),
+            self.assertRaisesRegex(history.InventoryError, "entry count"),
+        ):
+            history.tree_entries(
+                self.repository,
+                commit_data,
+                self.runner,
+                {},
+                {"bytes": 0, "parsed_entries": 0},
+                {"entries": 0, "path_bytes": 0},
+            )
+
+    def test_rejects_reachable_blob_above_verification_limit(self):
+        with (
+            mock.patch.object(history, "MAX_BLOB_OBJECT_BYTES", 1),
+            self.assertRaisesRegex(history.InventoryError, "blob object exceeds"),
         ):
             self.inventory()
 

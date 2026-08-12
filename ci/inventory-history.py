@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import hashlib
 import html
 import os
@@ -37,10 +38,20 @@ MAX_REACHABLE_COMMITS = 10_000
 MAX_TREE_OUTPUT_BYTES = 33_554_432
 MAX_HISTORICAL_TREE_ENTRIES = 500_000
 MAX_HISTORICAL_PATH_BYTES = 33_554_432
+MAX_UNIQUE_TREES = 100_000
+MAX_TREE_ENTRIES_PER_OBJECT = 100_000
+MAX_TOTAL_TREE_OBJECT_BYTES = 33_554_432
 MAX_PATH_BYTES = 4_096
 MAX_UNIQUE_BLOBS = 100_000
 MAX_TOTAL_SCANNED_OBJECT_BYTES = 268_435_456
+MAX_COMMIT_OBJECT_BYTES = 4_194_304
+MAX_TOTAL_COMMIT_OBJECT_BYTES = 268_435_456
+MAX_TAG_OBJECT_BYTES = 4_194_304
+MAX_TOTAL_TAG_OBJECT_BYTES = 67_108_864
+MAX_BLOB_OBJECT_BYTES = 67_108_864
+MAX_TOTAL_BLOB_OBJECT_BYTES = 536_870_912
 MAX_CANDIDATE_PATHS = 20
+MAX_CANDIDATE_PATH_DISPLAY_BYTES = 1_024
 MAX_GIT_TEXT_OUTPUT_BYTES = 4_194_304
 MAX_GIT_PROGRAM_BYTES = 67_108_864
 OID_PATTERN = re.compile(r"[0-9a-f]{40}")
@@ -426,18 +437,6 @@ def read_git_object(repository, object_type, object_id, size, runner=None):
     return data
 
 
-def validate_object_database(repository, runner=None):
-    git_limited(
-        repository,
-        MAX_GIT_TEXT_OUTPUT_BYTES,
-        "fsck",
-        "--strict",
-        "--no-dangling",
-        "--no-reflogs",
-        runner=runner,
-    )
-
-
 def parse_tag_object(data):
     header, separator, message = data.partition(b"\n\n")
     if not separator:
@@ -445,17 +444,23 @@ def parse_tag_object(data):
     headers = {}
     for line in header.splitlines():
         name, separator, value = line.partition(b" ")
-        if separator:
+        if separator and name in {b"object", b"type", b"tagger"}:
+            if name in headers:
+                raise InventoryError("annotated tag object has duplicate headers")
             headers[name] = value
-    target_type = headers.get(b"type", b"").decode("ascii", "replace")
+    try:
+        target_id = headers.get(b"object", b"").decode("ascii", "strict")
+        target_type = headers.get(b"type", b"").decode("ascii", "strict")
+    except UnicodeDecodeError as error:
+        raise InventoryError("annotated tag object has malformed target headers") from error
     tagger = headers.get(b"tagger")
-    if not target_type or tagger is None:
+    if not OID_PATTERN.fullmatch(target_id) or not target_type or tagger is None:
         raise InventoryError("annotated tag object has malformed headers")
     tagger_match = re.fullmatch(rb"(.*) <([^<>]*)> (\d+) ([+-]\d{4})", tagger)
     if tagger_match is None:
         raise InventoryError("annotated tag object has malformed tagger metadata")
     subject = message.splitlines()[0] if message.splitlines() else b""
-    return target_type, {
+    return target_id, target_type, {
         "tagger_name": tagger_match.group(1).decode("utf-8", "backslashreplace"),
         "tagger_email": tagger_match.group(2).decode("utf-8", "backslashreplace"),
         "tagger_date": (
@@ -507,6 +512,7 @@ def collect_refs(repository, runner=None):
 def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget, runner=None):
     hydrated = []
     errors = []
+    tag_budget = 0
     for ref in refs:
         ref = dict(ref)
         object_type = ref["object_type"]
@@ -514,6 +520,7 @@ def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget, runner
         display_name = ref["display_name"]
         tag_metadata = None
         tag_size = None
+        tag_data = None
         ref_error_count = len(errors)
         if object_type == "tag":
             tag_size = int(
@@ -521,9 +528,22 @@ def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget, runner
                     repository, "cat-file", "-s", object_id, runner=runner
                 ).strip()
             )
+            if tag_size > MAX_TAG_OBJECT_BYTES:
+                raise InventoryError(
+                    f"tag object exceeds {MAX_TAG_OBJECT_BYTES} bytes: {object_id}"
+                )
+            tag_budget += tag_size
+            if tag_budget > MAX_TOTAL_TAG_OBJECT_BYTES:
+                raise InventoryError(
+                    f"tag object bytes exceed {MAX_TOTAL_TAG_OBJECT_BYTES}"
+                )
+            tag_data = read_git_object(
+                repository, "tag", object_id, tag_size, runner=runner
+            )
+            target_id, target_type, parsed_metadata = parse_tag_object(tag_data)
             if tag_size > max_scanned_object_bytes:
                 errors.append(f"{display_name} tag metadata exceeds the content scan cap")
-                commit = None
+                commit = target_id if target_type == "commit" else None
                 tag_metadata = {
                     "tagger_name": "(not scanned)",
                     "tagger_email": "(not scanned)",
@@ -537,24 +557,12 @@ def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget, runner
                         "aggregate scanned object bytes exceed "
                         f"{MAX_TOTAL_SCANNED_OBJECT_BYTES}"
                     )
-                tag_data = read_git_object(
-                    repository, "tag", object_id, tag_size, runner=runner
-                )
-                target_type, tag_metadata = parse_tag_object(tag_data)
+                tag_metadata = parsed_metadata
                 if target_type == "tag":
                     errors.append(
                         f"{display_name} uses an unsupported nested annotated tag"
                     )
-                try:
-                    commit = git_text(
-                        repository,
-                        "rev-parse",
-                        "--verify",
-                        f"{object_id}^{{commit}}",
-                        runner=runner,
-                    ).strip()
-                except InventoryError:
-                    commit = None
+                commit = target_id if target_type == "commit" else None
         elif object_type == "commit":
             commit = object_id
         else:
@@ -566,6 +574,7 @@ def hydrate_refs(repository, refs, max_scanned_object_bytes, scan_budget, runner
                 "commit": commit,
                 "tag_metadata": tag_metadata,
                 "tag_size": tag_size,
+                "tag_data": tag_data if object_type == "tag" else None,
             }
         )
         hydrated.append(ref)
@@ -706,50 +715,102 @@ def validate_repository(repository, remote_url, runner=None):
     return {"git_version": version_output, "object_format": object_format}
 
 
+def commit_parents(data):
+    parents = []
+    for line in data.partition(b"\n\n")[0].splitlines():
+        if not line.startswith(b"parent "):
+            continue
+        try:
+            parent = line[7:].decode("ascii", "strict")
+        except UnicodeDecodeError as error:
+            raise InventoryError("commit object has a malformed parent ID") from error
+        if not OID_PATTERN.fullmatch(parent):
+            raise InventoryError("commit object has a malformed parent ID")
+        parents.append(parent)
+    return parents
+
+
 def collect_commits(repository, refs, runner=None):
     tips = sorted({ref["commit"] for ref in refs if ref["commit"] is not None})
     if not tips:
         raise InventoryError("the repository contains no refs that resolve to commits")
-    output_limit = (MAX_REACHABLE_COMMITS + 1) * 41
-    output = git_limited(
-        repository,
-        output_limit,
-        "rev-list",
-        "--stdin",
-        runner=runner,
-        input_data=("".join(f"{tip}\n" for tip in tips)).encode(),
+    commit_data_by_id = {}
+    total_bytes = 0
+    pending = tips[:]
+    while pending:
+        commit = pending.pop()
+        if commit in commit_data_by_id:
+            continue
+        if len(commit_data_by_id) == MAX_REACHABLE_COMMITS:
+            raise InventoryError(f"reachable commit count exceeds {MAX_REACHABLE_COMMITS}")
+        size = int(
+            git_text(repository, "cat-file", "-s", commit, runner=runner).strip()
+        )
+        if size > MAX_COMMIT_OBJECT_BYTES:
+            raise InventoryError(
+                f"commit object exceeds {MAX_COMMIT_OBJECT_BYTES} bytes: {commit}"
+            )
+        total_bytes += size
+        if total_bytes > MAX_TOTAL_COMMIT_OBJECT_BYTES:
+            raise InventoryError(
+                f"commit object bytes exceed {MAX_TOTAL_COMMIT_OBJECT_BYTES}"
+            )
+        data = read_git_object(repository, "commit", commit, size, runner=runner)
+        commit_data_by_id[commit] = data
+        pending.extend(commit_parents(data))
+    return sorted(commit_data_by_id), commit_data_by_id
+
+
+def parse_identity(value, field):
+    match = re.fullmatch(rb"(.*) <([^<>]*)> (-?\d+) ([+-]\d{4})", value)
+    if match is None:
+        raise InventoryError(f"commit object has malformed {field} metadata")
+    offset_text = match.group(4).decode("ascii")
+    offset_sign = 1 if offset_text[0] == "+" else -1
+    offset = datetime.timedelta(
+        hours=offset_sign * int(offset_text[1:3]),
+        minutes=offset_sign * int(offset_text[3:5]),
     )
-    if not output.endswith(b"\n"):
-        raise InventoryError("reachable commit enumeration is incomplete")
-    commits = output.decode("ascii").splitlines()
-    if not commits or any(not OID_PATTERN.fullmatch(commit) for commit in commits):
-        raise InventoryError("reachable commit enumeration failed")
-    commits = sorted(set(commits))
-    if len(commits) > MAX_REACHABLE_COMMITS:
-        raise InventoryError(f"reachable commit count exceeds {MAX_REACHABLE_COMMITS}")
-    return commits
+    try:
+        timestamp = datetime.datetime.fromtimestamp(
+            int(match.group(3)), datetime.timezone(offset)
+        ).isoformat()
+    except (OverflowError, OSError, ValueError) as error:
+        raise InventoryError(f"commit object has invalid {field} date") from error
+    return (
+        match.group(1).decode("utf-8", "backslashreplace"),
+        match.group(2).decode("utf-8", "backslashreplace"),
+        timestamp,
+    )
 
 
-def commit_metadata(repository, commit, runner=None):
-    fields = git_text(
-        repository,
-        "show",
-        "-s",
-        "--format=%H%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%s",
-        commit,
-        runner=runner,
-    ).rstrip("\n").split("\0", 7)
-    if len(fields) != 8 or fields[0] != commit:
-        raise InventoryError(f"malformed metadata for commit {commit}")
+def commit_metadata(commit, data):
+    header, separator, message = data.partition(b"\n\n")
+    if not separator:
+        raise InventoryError(f"commit {commit} has no message separator")
+    headers = {}
+    for line in header.splitlines():
+        name, separator, value = line.partition(b" ")
+        if separator and name in {b"author", b"committer"}:
+            if name in headers:
+                raise InventoryError(f"commit {commit} has duplicate identity headers")
+            headers[name] = value
+    if b"author" not in headers or b"committer" not in headers:
+        raise InventoryError(f"commit {commit} has incomplete identity metadata")
+    author_name, author_email, author_date = parse_identity(headers[b"author"], "author")
+    committer_name, committer_email, committer_date = parse_identity(
+        headers[b"committer"], "committer"
+    )
+    subject = message.splitlines()[0] if message.splitlines() else b""
     return {
-        "commit": fields[0],
-        "author_name": fields[1],
-        "author_email": fields[2],
-        "author_date": fields[3],
-        "committer_name": fields[4],
-        "committer_email": fields[5],
-        "committer_date": fields[6],
-        "subject": fields[7],
+        "commit": commit,
+        "author_name": author_name,
+        "author_email": author_email,
+        "author_date": author_date,
+        "committer_name": committer_name,
+        "committer_email": committer_email,
+        "committer_date": committer_date,
+        "subject": subject.decode("utf-8", "backslashreplace"),
     }
 
 
@@ -792,47 +853,142 @@ def display_ref_name(ref_name):
     return encode_ref_display(unquote_to_bytes(ref_name))
 
 
-def tree_entries(repository, commit, runner=None):
-    output = git_limited(
-        repository,
-        MAX_TREE_OUTPUT_BYTES,
-        "ls-tree",
-        "-r",
-        "-z",
-        "--full-tree",
-        commit,
-        runner=runner,
-    )
-    if output and not output.endswith(b"\0"):
-        raise InventoryError("historical tree output is incomplete")
+def commit_tree_id(data):
+    header = data.partition(b"\n\n")[0]
+    first_line = header.partition(b"\n")[0]
+    prefix = b"tree "
+    if not first_line.startswith(prefix):
+        raise InventoryError("commit object has no tree header")
+    try:
+        tree_id = first_line[len(prefix) :].decode("ascii", "strict")
+    except UnicodeDecodeError as error:
+        raise InventoryError("commit object has a malformed tree ID") from error
+    if not OID_PATTERN.fullmatch(tree_id):
+        raise InventoryError("commit object has a malformed tree ID")
+    return tree_id
+
+
+def parse_tree_object(data, tree_budget=None):
     entries = []
-    path_bytes = 0
-    for record in output.split(b"\0"):
-        if not record:
-            continue
-        if b"\t" not in record:
-            raise InventoryError("malformed historical tree record")
-        metadata, path = record.split(b"\t", 1)
-        if len(path) > MAX_PATH_BYTES:
-            raise InventoryError(f"historical path exceeds {MAX_PATH_BYTES} bytes")
-        path_bytes += len(path)
+    names = set()
+    previous_order_key = None
+    offset = 0
+    while offset < len(data):
+        if len(entries) == MAX_TREE_ENTRIES_PER_OBJECT:
+            raise InventoryError(
+                f"tree entry count exceeds {MAX_TREE_ENTRIES_PER_OBJECT} per object"
+            )
+        if tree_budget is not None:
+            tree_budget["parsed_entries"] += 1
+            if tree_budget["parsed_entries"] > MAX_HISTORICAL_TREE_ENTRIES:
+                raise InventoryError(
+                    f"parsed tree entry count exceeds {MAX_HISTORICAL_TREE_ENTRIES}"
+                )
+        metadata_end = data.find(b"\0", offset)
+        if metadata_end == -1:
+            raise InventoryError("tree object has an unterminated entry")
+        metadata = data[offset:metadata_end]
+        mode, separator, name = metadata.partition(b" ")
+        if (
+            not separator
+            or not mode
+            or not name
+            or b"/" in name
+            or name in {b".", b".."}
+            or name in names
+        ):
+            raise InventoryError("tree object has a malformed entry")
+        names.add(name)
+        object_start = metadata_end + 1
+        object_end = object_start + 20
+        if object_end > len(data):
+            raise InventoryError("tree object has a truncated object ID")
         try:
-            metadata_fields = metadata.decode("ascii", "strict").split(" ")
+            mode_text = mode.decode("ascii", "strict")
         except UnicodeDecodeError as error:
-            raise InventoryError("malformed historical tree metadata") from error
-        if len(metadata_fields) != 3:
-            raise InventoryError("malformed historical tree metadata")
-        mode, object_type, object_id = metadata_fields
-        if not OID_PATTERN.fullmatch(object_id):
-            raise InventoryError("malformed historical tree object ID")
+            raise InventoryError("tree object has a malformed mode") from error
+        if mode_text not in {
+            "40000",
+            "100644",
+            "100755",
+            "120000",
+            "160000",
+        }:
+            raise InventoryError("tree object has a malformed mode")
+        if mode_text == "40000":
+            object_type = "tree"
+        elif mode_text == "160000":
+            object_type = "commit"
+        else:
+            object_type = "blob"
+        order_key = name + (b"/" if object_type == "tree" else b"\0")
+        if previous_order_key is not None and order_key <= previous_order_key:
+            raise InventoryError("tree object entries are not canonically ordered")
+        previous_order_key = order_key
         entries.append(
             {
-                "mode": mode,
+                "mode": mode_text,
                 "type": object_type,
-                "object_id": object_id,
-                "path": path,
+                "object_id": data[object_start:object_end].hex(),
+                "name": name,
             }
         )
+        offset = object_end
+    return entries
+
+
+def tree_entries(repository, commit_data, runner, tree_cache, tree_budget, work_budget):
+    entries = []
+    path_bytes = 0
+    pending = [(b"", commit_tree_id(commit_data))]
+    while pending:
+        prefix, tree_id = pending.pop()
+        tree = tree_cache.get(tree_id)
+        if tree is None:
+            if len(tree_cache) == MAX_UNIQUE_TREES:
+                raise InventoryError(f"unique tree count exceeds {MAX_UNIQUE_TREES}")
+            size = int(
+                git_text(repository, "cat-file", "-s", tree_id, runner=runner).strip()
+            )
+            tree_budget["bytes"] += size
+            if tree_budget["bytes"] > MAX_TOTAL_TREE_OBJECT_BYTES:
+                raise InventoryError(
+                    f"tree object bytes exceed {MAX_TOTAL_TREE_OBJECT_BYTES}"
+                )
+            tree = parse_tree_object(
+                read_git_object(repository, "tree", tree_id, size, runner=runner),
+                tree_budget,
+            )
+            tree_cache[tree_id] = tree
+        for entry in tree:
+            path = prefix + entry["name"]
+            if len(path) > MAX_PATH_BYTES:
+                raise InventoryError(f"historical path exceeds {MAX_PATH_BYTES} bytes")
+            if entry["type"] == "tree":
+                work_budget["entries"] += 1
+                work_budget["path_bytes"] += len(path)
+                if work_budget["entries"] > MAX_HISTORICAL_TREE_ENTRIES:
+                    raise InventoryError(
+                        f"historical tree entry count exceeds {MAX_HISTORICAL_TREE_ENTRIES}"
+                    )
+                if work_budget["path_bytes"] > MAX_HISTORICAL_PATH_BYTES:
+                    raise InventoryError(
+                        f"historical path bytes exceed {MAX_HISTORICAL_PATH_BYTES}"
+                    )
+                pending.append((path + b"/", entry["object_id"]))
+                continue
+            work_budget["entries"] += 1
+            work_budget["path_bytes"] += len(path)
+            if work_budget["entries"] > MAX_HISTORICAL_TREE_ENTRIES:
+                raise InventoryError(
+                    f"historical tree entry count exceeds {MAX_HISTORICAL_TREE_ENTRIES}"
+                )
+            if work_budget["path_bytes"] > MAX_HISTORICAL_PATH_BYTES:
+                raise InventoryError(
+                    f"historical path bytes exceed {MAX_HISTORICAL_PATH_BYTES}"
+                )
+            path_bytes += len(path)
+            entries.append({**entry, "path": path})
     return entries, path_bytes
 
 
@@ -857,7 +1013,20 @@ def secret_candidates(data, object_id, object_kind, paths):
         if truncated:
             break
     sorted_paths = sorted(paths)
-    candidate_paths = sorted_paths[:MAX_CANDIDATE_PATHS]
+    candidate_paths = []
+    candidate_path_bytes = 0
+    for path in sorted_paths[:MAX_CANDIDATE_PATHS]:
+        encoded = path.encode("utf-8")
+        remaining = MAX_CANDIDATE_PATH_DISPLAY_BYTES - candidate_path_bytes
+        if remaining <= 0:
+            break
+        if len(encoded) > remaining:
+            digest = hashlib.sha256(encoded).hexdigest()
+            suffix = f" [display-sha256:{digest}]"
+            prefix_bytes = max(0, remaining - len(suffix.encode()))
+            path = encoded[:prefix_bytes].decode("utf-8", "ignore") + suffix
+        candidate_paths.append(path)
+        candidate_path_bytes += len(path.encode("utf-8"))
     omitted_path_count = len(sorted_paths) - len(candidate_paths)
     candidates = []
     line = 1
@@ -977,22 +1146,20 @@ def collect_inventory_with_runner(
         )
     if coverage_errors:
         raise InventoryError("local refs do not exactly match the remote advertisement")
-    validate_object_database(repository, runner=runner)
     refs, ref_errors = hydrate_refs(
         repository, refs, max_scanned_object_bytes, scan_budget, runner=runner
     )
     coverage_errors.extend(ref_errors)
 
-    commits = collect_commits(repository, refs, runner=runner)
+    commits, commit_data_by_id = collect_commits(repository, refs, runner=runner)
     if final_commit not in commits:
         raise InventoryError("--final-commit is not reachable from the inventoried refs")
     metadata = []
     commit_sizes = {}
     unscanned_metadata_objects = []
     for commit in commits:
-        size = int(
-            git_text(repository, "cat-file", "-s", commit, runner=runner).strip()
-        )
+        commit_data = commit_data_by_id[commit]
+        size = len(commit_data)
         commit_sizes[commit] = size
         if size > max_scanned_object_bytes:
             coverage_errors.append(f"commit metadata exceeds the content scan cap: {commit}")
@@ -1023,29 +1190,39 @@ def collect_inventory_with_runner(
                     "aggregate scanned object bytes exceed "
                     f"{MAX_TOTAL_SCANNED_OBJECT_BYTES}"
                 )
-            metadata.append(commit_metadata(repository, commit, runner=runner))
+            metadata.append(commit_metadata(commit, commit_data))
 
     blob_paths = {}
     submodules = set()
     final_paths = set()
     historical_tree_entries = 0
     historical_path_bytes = 0
+    tree_cache = {}
+    tree_budget = {"bytes": 0, "parsed_entries": 0}
+    tree_work_budget = {"entries": 0, "path_bytes": 0}
     for commit in commits:
-        entries, path_bytes = tree_entries(repository, commit, runner=runner)
+        commit_data = commit_data_by_id[commit]
+        entries, path_bytes = tree_entries(
+            repository,
+            commit_data,
+            runner,
+            tree_cache,
+            tree_budget,
+            tree_work_budget,
+        )
         historical_tree_entries += len(entries)
         historical_path_bytes += path_bytes
-        if historical_tree_entries > MAX_HISTORICAL_TREE_ENTRIES:
-            raise InventoryError(
-                f"historical tree entry count exceeds {MAX_HISTORICAL_TREE_ENTRIES}"
-            )
-        if historical_path_bytes > MAX_HISTORICAL_PATH_BYTES:
-            raise InventoryError(
-                f"historical path bytes exceed {MAX_HISTORICAL_PATH_BYTES}"
-            )
         for entry in entries:
             if commit == final_commit:
                 final_paths.add(entry["path"])
             if entry["type"] == "blob":
+                if (
+                    entry["object_id"] not in blob_paths
+                    and len(blob_paths) == MAX_UNIQUE_BLOBS
+                ):
+                    raise InventoryError(
+                        f"unique blob count exceeds {MAX_UNIQUE_BLOBS}"
+                    )
                 blob_paths.setdefault(entry["object_id"], set()).add(entry["path"])
             elif entry["type"] == "commit":
                 submodules.add((entry["path"], entry["object_id"]))
@@ -1054,13 +1231,22 @@ def collect_inventory_with_runner(
     candidates = []
     truncated_secret_scans = []
     total_scanned_object_bytes = scan_budget["bytes"]
-    if len(blob_paths) > MAX_UNIQUE_BLOBS:
-        raise InventoryError(f"unique blob count exceeds {MAX_UNIQUE_BLOBS}")
+    total_verified_blob_bytes = 0
     for object_id, paths in sorted(blob_paths.items()):
         path_records = [path_record(path) for path in sorted(paths)]
         size = int(
             git_text(repository, "cat-file", "-s", object_id, runner=runner).strip()
         )
+        if size > MAX_BLOB_OBJECT_BYTES:
+            raise InventoryError(
+                f"blob object exceeds {MAX_BLOB_OBJECT_BYTES} bytes: {object_id}"
+            )
+        total_verified_blob_bytes += size
+        if total_verified_blob_bytes > MAX_TOTAL_BLOB_OBJECT_BYTES:
+            raise InventoryError(
+                f"blob object bytes exceed {MAX_TOTAL_BLOB_OBJECT_BYTES}"
+            )
+        data = read_git_object(repository, "blob", object_id, size, runner=runner)
         scanned = size <= max_scanned_object_bytes
         binary = None
         if scanned:
@@ -1070,9 +1256,6 @@ def collect_inventory_with_runner(
                     "aggregate scanned object bytes exceed "
                     f"{MAX_TOTAL_SCANNED_OBJECT_BYTES}"
                 )
-            data = read_git_object(
-                repository, "blob", object_id, size, runner=runner
-            )
             binary = is_binary(data)
             display_paths = [record["display"] for record in path_records]
             found, truncated = secret_candidates(
@@ -1111,7 +1294,7 @@ def collect_inventory_with_runner(
         paths = [f"commit:{commit}"]
         if size > max_scanned_object_bytes:
             continue
-        data = read_git_object(repository, "commit", commit, size, runner=runner)
+        data = commit_data_by_id[commit]
         found, truncated = secret_candidates(data, commit, "commit", paths)
         candidates.extend(found)
         if len(candidates) > MAX_TOTAL_SECRET_CANDIDATES:
@@ -1133,12 +1316,16 @@ def collect_inventory_with_runner(
             for ref in refs
             if ref["object_type"] == "tag" and ref["object_id"] == object_id
         )
+        data = next(
+            ref["tag_data"]
+            for ref in refs
+            if ref["object_type"] == "tag" and ref["object_id"] == object_id
+        )
         if size > max_scanned_object_bytes:
             unscanned_metadata_objects.append(
                 {"object_id": object_id, "object_kind": "tag", "paths": paths, "size": size}
             )
             continue
-        data = read_git_object(repository, "tag", object_id, size, runner=runner)
         found, truncated = secret_candidates(data, object_id, "tag", paths)
         candidates.extend(found)
         if len(candidates) > MAX_TOTAL_SECRET_CANDIDATES:
@@ -1587,8 +1774,8 @@ def render_report(inventory, invocation):
             "- Mirror refresh: `git -C <isolated-mirror> fetch --prune origin '+refs/*:refs/*'`",
             "- Ref query: `git ls-remote --refs <remote>`",
             "- Local refs: `git for-each-ref`",
-            "- Commit walk: `git rev-list <all peeled ref tips>`",
-            "- Historical trees: `git ls-tree -r -z --full-tree <each reachable commit>`",
+            "- Commit walk: verified raw `parent` headers from each peeled ref tip",
+            "- Historical trees: verified raw tree objects from each reachable commit",
             "- Object reads: `git cat-file`",
             "",
         ]
