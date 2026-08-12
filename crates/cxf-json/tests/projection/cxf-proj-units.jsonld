@@ -39,7 +39,9 @@
       "S231:isOfDataType": { "@id": "S231:Real" },
       "S231:instantiate": true,
       "qudt:hasUnit": { "@id": "unit:M3-PER-SEC" },
-      "S231:hasUnit": { "@id": "S231:kWh" }
+      "http://qudt.org/schema/qudt#hasUnit": { "@id": "S231:kWh" },
+      "S231:hasDisplayUnit": { "@id": "http://qudt.org/vocab/unit#M3-PER-SEC" },
+      "qudt:hasQuantityKind": { "@id": "http://qudt.org/vocab/quantitykind#Pressure" }
     }
   ]
 }

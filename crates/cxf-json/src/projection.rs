@@ -8,10 +8,10 @@
 //! `S231:hasDisplayUnit`, `qudt:hasQuantityKind`) with verbatim,
 //! never-normalized target spellings, `graphics` and
 //! `conditionalExpression` strings (opaque; C-005/C-006), and the emitter
-//! metadata strings (`label`, `description`, `documentation`,
-//! `accessSpecifier`, `defaultValue`, `generatePointlist`,
-//! `controlledDevice`). `hasFmuPath` is a verbatim text property on
-//! extension blocks; both CDL annotation spellings collapse to the
+//! metadata members (`label`, `description`, `documentation`,
+//! `accessSpecifier`, `controlledDevice` as text; `defaultValue` as an
+//! opaque CXF value; `generatePointlist` as a boolean). `hasFmuPath` is a
+//! verbatim text property; both CDL annotation spellings collapse to the
 //! `ExtensionBlock` type assertion (C-014 closed).
 //!
 //! The projected record classifies the OBC section 8.2 core vocabulary into
@@ -77,6 +77,22 @@ const S231_VOCABULARIES: [Vocabulary; 3] = [
     Vocabulary::S231P,
     Vocabulary::S231PLegacyHttps,
 ];
+
+impl Vocabulary {
+    /// Exact per-identity term registration. The three S231 generations
+    /// register the full S231 surface *except* the QUDT unit predicates,
+    /// and the QUDT schema namespace registers only its two observed unit
+    /// predicates: per-identity allowlists keep registration lexical
+    /// instead of a global term×vocabulary cross-product (C-018).
+    const fn allows(self, term: Term) -> bool {
+        match self {
+            Self::S231 | Self::S231P | Self::S231PLegacyHttps => {
+                !matches!(term, Term::HasUnit | Term::HasQuantityKind)
+            }
+            Self::QudtSchema => matches!(term, Term::HasUnit | Term::HasQuantityKind),
+        }
+    }
+}
 
 fn vocabulary_for_namespace(namespace: &str) -> Option<Vocabulary> {
     VOCABULARIES
@@ -367,7 +383,9 @@ fn activate_context_value(value: &OrderedValue, active: &mut ActiveContext) {
 fn lookup(spelled: &str, context: &ActiveContext) -> Option<TermId> {
     for vocabulary in VOCABULARIES {
         if let Some(local) = spelled.strip_prefix(vocabulary.namespace_iri()) {
-            return Term::from_local_name(local).map(|term| TermId { vocabulary, term });
+            return Term::from_local_name(local)
+                .filter(|term| vocabulary.allows(*term))
+                .map(|term| TermId { vocabulary, term });
         }
     }
     let (prefix, local) = spelled.split_once(':')?;
@@ -375,15 +393,19 @@ fn lookup(spelled: &str, context: &ActiveContext) -> Option<TermId> {
         return None;
     }
     let vocabulary = *context.prefixes.get(prefix)?;
-    Term::from_local_name(local).map(|term| TermId { vocabulary, term })
+    Term::from_local_name(local)
+        .filter(|term| vocabulary.allows(*term))
+        .map(|term| TermId { vocabulary, term })
 }
 
 /// Resolves an authored `isOfDataType` target spelling to a registered
 /// primitive datatype under the document's registered context.
 fn resolve_data_type(spelling: &str, context: &ActiveContext) -> Option<DataTypeKind> {
+    // Datatype terms only register under S231 generation namespaces; a
+    // QUDT-schema spelling like `qudt:Real` is not a CXF datatype.
     let local = {
         let mut full_iri_match = None;
-        for vocabulary in VOCABULARIES {
+        for vocabulary in S231_VOCABULARIES {
             if let Some(local) = spelling.strip_prefix(vocabulary.namespace_iri()) {
                 full_iri_match = Some(local);
                 break;
@@ -393,7 +415,10 @@ fn resolve_data_type(spelling: &str, context: &ActiveContext) -> Option<DataType
             Some(local) => local,
             None => {
                 let (prefix, local) = spelling.split_once(':')?;
-                context.prefixes.get(prefix)?;
+                let vocabulary = context.prefixes.get(prefix)?;
+                if !S231_VOCABULARIES.contains(vocabulary) {
+                    return None;
+                }
                 local
             }
         }
@@ -510,11 +535,18 @@ fn classify_unit_target(spelling: &str, context: &ActiveContext) -> UnitTargetCl
             return UnitTargetClass::S231Fallback;
         }
     }
-    if let Some((prefix, _)) = spelling.split_once(':') {
+    if let Some((prefix, local)) = spelling.split_once(':')
+        && !local.is_empty()
+    {
         if let Some(bucket) = context.unit_prefixes.get(prefix) {
             return bucket.target_class();
         }
-        if context.prefixes.contains_key(prefix) {
+        // Only S231-generation prefixes are the emitter's unknown-unit
+        // fallback shape; a QUDT-schema-prefixed target (or anything else
+        // registered but non-S231) is just `Other`.
+        if let Some(vocabulary) = context.prefixes.get(prefix)
+            && S231_VOCABULARIES.contains(vocabulary)
+        {
             return UnitTargetClass::S231Fallback;
         }
     }
@@ -1550,6 +1582,17 @@ impl ProjectionBuilder<'_> {
         properties: &mut Vec<NodeProperty>,
         extensions: &mut Vec<ExtensionRecord>,
     ) {
+        // Unit members accept arrays of reference objects per-item, with
+        // wrong-shaped items retained as extension evidence — the same
+        // surface the link contract gives `parse_link_value`.
+        if expected_shape(term_id.term()) == ExpectedPayload::Unit
+            && let OrderedValue::Array { values, .. } = value
+        {
+            for item in values {
+                self.parse_literal(term_id, node, member_name, item, properties, extensions);
+            }
+            return;
+        }
         let payload = match expected_shape(term_id.term()) {
             ExpectedPayload::Text => match value {
                 OrderedValue::String { value, .. } => Ok(PropertyPayload::Text(value.clone())),
@@ -1691,6 +1734,7 @@ impl ProjectionBuilder<'_> {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum ExpectedPayload {
     Text,
     Boolean,
@@ -1742,11 +1786,12 @@ const fn expected_shape(term: Term) -> ExpectedPayload {
 
 /// Role mapping for the three unit-carrying terms; only called for terms
 /// routed to `ExpectedPayload::Unit`.
-const fn unit_role(term: Term) -> UnitRole {
+fn unit_role(term: Term) -> UnitRole {
     match term {
         Term::HasUnit => UnitRole::Unit,
         Term::HasDisplayUnit => UnitRole::DisplayUnit,
-        _ => UnitRole::QuantityKind,
+        Term::HasQuantityKind => UnitRole::QuantityKind,
+        _ => unreachable!("only unit-routed terms reach unit_role"),
     }
 }
 
@@ -3185,10 +3230,11 @@ mod c2_surface_tests {
         assert_eq!(kind.target_class(), UnitTargetClass::QudtQuantityKindIri);
     }
 
-    /// Full QUDT IRIs classify without any context prefix; uniform
-    /// registration also recognizes an authored full S231 `hasUnit` IRI.
+    /// Full QUDT IRIs register as predicates and classify as targets
+    /// without any context prefix; a full S231 target spelling stays the
+    /// emitter's fallback shape.
     #[test]
-    fn c018_full_iri_and_uniform_namespace_registration() {
+    fn c018_full_iri_predicates_and_targets() {
         let projection = units_fixture();
         let flow = projection
             .nodes()
@@ -3205,10 +3251,115 @@ mod c2_surface_tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(units.len(), 2);
+        assert_eq!(units.len(), 2, "{:?}", flow.properties());
+        assert_eq!(units[0].spelling(), "unit:M3-PER-SEC");
         assert_eq!(units[0].target_class(), UnitTargetClass::QudtUnitIri);
         // `S231:kWh` — the emitter's unspecified-unit fallback spelling.
+        assert_eq!(units[1].spelling(), "S231:kWh");
         assert_eq!(units[1].target_class(), UnitTargetClass::S231Fallback);
+
+        let display = unit_property(flow, Term::HasDisplayUnit).expect("full-IRI target indexed");
+        assert_eq!(display.spelling(), "http://qudt.org/vocab/unit#M3-PER-SEC");
+        assert_eq!(display.target_class(), UnitTargetClass::QudtUnitIri);
+        let kind = unit_property(flow, Term::HasQuantityKind).expect("full-IRI target indexed");
+        assert_eq!(
+            kind.spelling(),
+            "http://qudt.org/vocab/quantitykind#Pressure"
+        );
+        assert_eq!(kind.target_class(), UnitTargetClass::QudtQuantityKindIri);
+    }
+
+    /// Exact per-identity registration: `hasUnit`/`hasQuantityKind` only
+    /// exist under the QUDT schema identity, never under an S231
+    /// generation (C-018). An authored `S231:hasUnit` is extension
+    /// evidence, and simple S231 terms never register under `qudt:`.
+    #[test]
+    fn c018_unit_predicates_are_identity_scoped() {
+        let projection = project_str(
+            r#"{
+              "@context": {
+                "S231": "http://data.ashrae.org/S231#",
+                "qudt": "http://qudt.org/schema/qudt#",
+                "unit": "http://qudt.org/vocab/unit#",
+                "q": "http://qudt.org/vocab/quantitykind#"
+              },
+              "@graph": [
+                {
+                  "@id": "ex:t1",
+                  "@type": "S231:Parameter",
+                  "S231:hasUnit": { "@id": "unit:PA" },
+                  "qudt:label": "cross-namespace probe",
+                  "qudt:hasQuantityKind": [ { "@id": "q:Angle" }, "bad item" ]
+                }
+              ]
+            }"#,
+        );
+        let node = &projection.nodes()[0];
+        let predicates: Vec<&str> = node
+            .extensions()
+            .iter()
+            .map(|record| record.predicate())
+            .collect();
+        // `S231:hasUnit` and `qudt:label` are cross-identity probes; the
+        // array's wrong-shaped string item also leaves evidence, while its
+        // valid reference object still indexes.
+        assert!(predicates.contains(&"S231:hasUnit"), "{predicates:?}");
+        assert!(predicates.contains(&"qudt:label"), "{predicates:?}");
+        let kind = unit_property(node, Term::HasQuantityKind).expect("valid array item indexes");
+        assert_eq!(kind.spelling(), "q:Angle");
+        assert_eq!(kind.target_class(), UnitTargetClass::QudtQuantityKindIri);
+        assert!(
+            node.extensions()
+                .iter()
+                .any(|record| record.kind() == "string"),
+            "{:?}",
+            node.extensions()
+        );
+    }
+
+    /// A QUDT-schema-compacted unit *target* (`qudt:KiloGM`) is not a
+    /// QUDT vocab IRI and is not an S231 fallback: it classifies as
+    /// `Other`. Empty-local spellings and undeclared prefixes also stay
+    /// `Other`.
+    #[test]
+    fn c018_schema_prefixed_and_degenerate_targets_stay_other() {
+        let projection = project_str(
+            r#"{
+              "@context": {
+                "S231": "http://data.ashrae.org/S231#",
+                "qudt": "http://qudt.org/schema/qudt#",
+                "unit": "http://qudt.org/vocab/unit#"
+              },
+              "@graph": [
+                {
+                  "@id": "ex:t2",
+                  "@type": "S231:Parameter",
+                  "qudt:hasUnit": [
+                    { "@id": "qudt:KiloGM" },
+                    { "@id": "unit:" },
+                    { "@id": "vendor:degAPI" }
+                  ]
+                }
+              ]
+            }"#,
+        );
+        let node = &projection.nodes()[0];
+        let classes: Vec<UnitTargetClass> = node
+            .properties()
+            .iter()
+            .filter_map(|property| match property.payload() {
+                PropertyPayload::Unit(reference) => Some(reference.target_class()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            classes,
+            &[
+                UnitTargetClass::Other,
+                UnitTargetClass::Other,
+                UnitTargetClass::Other
+            ]
+        );
     }
 
     /// C-017: emitter attribute members index verbatim; the xsd:decimal

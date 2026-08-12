@@ -9,8 +9,11 @@ output shape recorded in `_research/results/W-013-UPSTREAM-SURVEY.md`
 classes). The documents, identifiers, labels, descriptions, and values were
 authored for this repository; no prose, examples, graphics, source, goldens,
 or distinctive serializations were copied, translated, or derived from
-`lbl-srg/modelica-json`, OBC, or another external fixture corpus. All
-instance identities use `https://example.test/` or relative IRIs.
+`lbl-srg/modelica-json`, OBC, or another external fixture corpus. Instance
+identities are project-authored; C1 fixture identities use
+`https://example.test/` or relative IRIs, and C2 fixtures declare the
+emitter-factual `ex: http://example.org#` prefix plus QUDT vocab prefixes as
+vocabulary facts (register rows C-015/C-016/C-018).
 
 D-024 permits specification facts and vocabulary identifiers in owned tests
 and forbids storing, transmitting, distributing, or test-fetching external
@@ -39,5 +42,5 @@ SHA-256 checksums recorded at authoring:
 - `2920df34c040b6965d422fa4439b59423847f75bedcd960cac3810850f6f673e` `cxf-proj-legacy-https.jsonld`
 - `35335a71ba3d52c8a6ab47df87b172092d331398a7ca9d2674215e603f938abe` `cxf-proj-specform.jsonld`
 - `d69d186922e4cb394c555ba64c02c4b9e65d35ab7bcaf213b0917a2e9b43ca68` `cxf-proj-weak.jsonld`
-- `e8c0f137028d24cb03e7e51b0cb898e2d5cc16526716552b92fbb2be7931ac1f` `cxf-proj-units.jsonld`
+- `09d4e2201ccc1ee8e23849f70c032dcf57b08e427c9fe8fc97d084b7a4eb4730` `cxf-proj-units.jsonld`
 - `70456176810b2009cb31714628a9d24029a58d259a192d159821c96101dd8b6f` `cxf-proj-annotation.jsonld`
