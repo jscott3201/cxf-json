@@ -2,83 +2,118 @@
 
 [![CI](https://github.com/jscott3201/cxf-json/actions/workflows/ci.yml/badge.svg)](https://github.com/jscott3201/cxf-json/actions/workflows/ci.yml)
 
-CXF JSON is an early-stage Rust implementation for reading and validating
+CXF JSON is building a careful, host-neutral core for
 [Control eXchange Format (CXF)](https://obc.lbl.gov/specification/cxf.html)
-JSON-LD. CXF represents configured building-control logic after a Modelica or
-CDL producer has translated its source.
+JSON-LD documents. A Modelica or CDL producer can say exactly what a building
+control was configured to do; this project is building the Rust types and
+compatibility bands that can retain, diagnose, and eventually validate that
+exchange document without losing the bytes someone handed you.
 
-The project is intended to expose the same typed CXF document and diagnostics to
-Rust, Python, browser JavaScript, and Node.js. JSON-LD and RDF processing remain
-internal implementation stages rather than general-purpose public APIs.
+## Read this first
 
-## Status
+CXF JSON is public source, **not a published parser package**.
 
-The source repository is public, but no `cxf-json` package has been published.
-Profile 0.1.3 defines the owned Rust contract foundations, a 1 MiB default
-input-byte admission limit, configurable JSON-structure limits, and private RDF
-output-retention limits. It makes no public CXF parse, conformance, untrusted-input
-safety, or API-stability claim. Explicit project instrumentation builds expose a
-doc-hidden observation shim; normal builds have no supported parse entry point.
+Today the `cxf-json` crate is an unpublished Rust contract crate. It owns exact
+source bytes, byte locations, validation diagnostics, an optional absolute
+document IRI, and the parse options that will govern the public parser. It does
+not yet expose a public CXF parse function, typed CXF model, conformance API, or
+untrusted-input resource-safety claim.
 
-The workspace contains two unpublished crates:
+That boundary is deliberate: the useful, reusable contract is landing before
+language bindings are frozen around parser internals.
 
-- `cxf-json` defines source, document-IRI, byte-location, diagnostic, error, and
-  option types. Its default feature adds private JSON-LD processing with bounded
-  RDF output retention, but normal builds expose no supported parse entry point.
-- `cxf-ingest-probe` remains the M0 evidence crate. It does not implement typed
-  CXF projection, profile validation, or production resource limits. Do not use
-  it to process untrusted input.
+Host plans and state are tracked in
+[`docs/LANGUAGE-SURFACES.md`](docs/LANGUAGE-SURFACES.md). In brief,
 
-## Intended scope
+- Rust has local contract foundations, but no package release;
+- Python and browser JavaScript have planned bindings, not released ones; and
+- Node is used only by internal benchmark/smoke wiring today.
 
-- Accept CXF JSON-LD as bytes, with network access disabled by default.
-- Preserve submitted bytes, RDF term identity, datatypes, unknown CXF terms, and
-  available source locations.
-- Project supported CXF terms into owned Rust types and return versioned
-  validation diagnostics without discarding the parsed document.
-- Keep Rust, Python, browser, and Node results equivalent at their boundaries.
+## Why this project
 
-Modelica and CDL source parsing, control execution, FMU execution, and a public
-RDF graph API are outside the current scope.
+Building-control exchange data needs consumers that are precise about identity,
+diagnostics, and resource boundaries. CXF JSON keeps those concerns owned and
+explicit:
 
-## Current probe
+- **Exact source retention** keeps submitted bytes available for diagnostics and
+  evidence.
+- **Byte locations** report zero-based offsets, lines, and columns rather than
+  lossy source abstractions.
+- **Structured diagnostics** separate stage, severity, machine code, byte range,
+  JSON Pointer, and RDF-term evidence.
+- **Host-neutral options** define input, JSON-structure, and RDF-output limit
+  configuration without leaking Serde, JSON-LD, RDF, filesystem, HTTP, Python,
+  or JavaScript values into the Rust public surface.
+- **Language adapters come after the shared contract** so Rust, Python,
+  browsers, and Node can eventually receive equivalent typed results instead of
+  four different parsers.
 
-The probe and its repository-authored fixtures verify:
+## What you can do now
 
-- exact input-byte retention and zero-based byte locations;
-- malformed JSON, invalid UTF-8, and duplicate decoded member-name rejection;
-- embedded JSON-LD context processing without a network loader;
-- owned RDF summaries without exposing processor-specific RDF types;
-- native Rust and `wasm32-unknown-unknown` builds, including a Node-executed WASM
-  smoke test.
+### Develop against the Rust contract crate locally
 
-These checks qualify implementation boundaries. They are not a public parser API
-or a conformance suite.
+The crate is intentionally unpublished. For a local development build, add a
+path dependency from a crate whose `Cargo.toml` can resolve this checkout's
+`crates/cxf-json` directory:
 
-## Core contract
+```toml
+[dependencies]
+cxf-json = { path = "<path-to-cxf-json-checkout>/crates/cxf-json" }
+```
 
-The `cxf-json` crate owns exact source bytes, validates an optional absolute
-document IRI, and defines zero-based byte positions, half-open ranges, structured
-diagnostic fields, a future parse-error envelope, and private parse options. Input
-admission defaults to an inclusive 1 MiB byte limit and returns a source-free error
-before copying oversized input. Parse options also define depth, object-member,
-total-value, and decoded member-name byte limits for the private production
-preflight. Profile 0.1.3 also defines inclusive defaults of 65,536 emitted RDF
-quads and 8 MiB of retained RDF term strings. These limits bound project output,
-not backend allocation, process memory, or execution time. Its public signatures
-contain no Serde, JSON-LD, RDF, filesystem, HTTP, Python, or JavaScript values.
+The current public Rust types are source and diagnostic foundations, not a
+parser. This example is compile-checked manually against the source crate:
 
-See [`spec/PROFILE.md`](spec/PROFILE.md) for the complete 0.1.3 contract. W-007
-has a private lossless ordered source view. A Linux-only project instrumentation
-harness tests one worker process with bounded transfer, deadline, and address space;
-it is not a supported parser or cross-target containment boundary. RDF identity
-joins and the public parse boundary remain unimplemented. W-011 retains backend
-diagnostic and production host resource policy; W-013 owns concrete typed CXF and
-extension records.
+```rust
+use cxf_json::{DocumentIri, ParseOptions, SourceDocument};
 
-## Build and test
+fn admit_example() -> Result<usize, Box<dyn std::error::Error>> {
+    let options = ParseOptions::new()
+        .with_max_input_bytes(65_536)
+        .with_max_json_nesting_depth(32)
+        .with_document_iri(DocumentIri::parse("https://example.test/control")?);
 
-The repository uses Rust 1.97.1.
+    let source = SourceDocument::admit_bytes(br#"{"@context":{}}"#, &options)?;
+    assert_eq!(source.as_bytes(), br#"{"@context":{}}"#);
+    Ok(source.len())
+}
+```
+
+Profile 0.1.3 defines defaults of **1 MiB input**, **64 levels of nesting**,
+**4,096 members per object**, **65,536 JSON values**, **262,144 decoded
+member-name bytes**, **65,536 emitted RDF quads**, and **8 MiB retained RDF term
+bytes**. These defaults do not create a supported public parser; the private
+semantic stage applies the RDF output options only under profile-controlled
+project instrumentation.
+
+### Inspect the probe evidence
+
+The `cxf-ingest-probe` workspace member is an evidence crate for the M0
+implementation boundaries. It verifies exact input-byte retention, exact byte
+locations, malformed JSON and decoded duplicate-name rejection, embedded JSON-LD
+context processing with no network loader, native Rust execution, and
+`wasm32-unknown-unknown` execution under Node.
+
+Do not present the probe as the product API. It does not implement typed CXF
+projection, profile validation, or production resource limits; do not use it for
+untrusted input.
+
+### Track the planned language bindings
+
+The binding plan is ambitious: the Rust, Python, browser, and Node surfaces
+should return equivalent typed documents and diagnostics once the parser
+boundary is supported. Current reality is narrower: only the Rust contract
+foundations are present, and Node’s role in this repository is internal
+benchmark and smoke execution, not a supported JavaScript adapter.
+
+See [`docs/LANGUAGE-SURFACES.md`](docs/LANGUAGE-SURFACES.md) for the live
+binding-status matrix and the constraints on future PyO3 and JavaScript
+documentation. That page stays current as bindings land; this section links to
+it instead of copying it.
+
+## Operation and verification
+
+CXF JSON uses Rust 1.97.1.
 
 ```console
 rustup toolchain install 1.97.1 --profile minimal --component clippy --component rustfmt
@@ -88,31 +123,48 @@ cargo +1.97.1 test --workspace --all-targets --all-features --locked
 cargo +1.97.1 test --workspace --no-default-features --locked
 ```
 
-CI also runs repository-owned corpus and aggregation checks, builds both feature
-sets for `wasm32-unknown-unknown`, exercises the Node smoke metrics path, and
-enforces exact WASM dependency allowlists.
+CI also runs repository-owned corpus and benchmark aggregation checks, builds
+both feature sets for `wasm32-unknown-unknown`, executes Node smoke workloads,
+tests reachable-history inventory tooling, enforces exact WASM dependency
+allowlists, and runs a bounded coverage-guided parser campaign.
 
-[`benchmarks.md`](benchmarks.md) records the macOS parser/process baseline,
-environment details, corpus identity, reproduction commands, and known gaps. The
-current numbers cover the evidence probe and a conditional private production
-semantic harness, not a supported parser, package-performance claim, or release
-threshold.
+[`benchmarks.md`](benchmarks.md) records corpus, resource-stress, private
+production semantic, and WASM baselines with workload identities and
+reproduction commands. It also records Linux worker-containment **mechanism
+evidence** without calling it a resource-safety baseline or host API. Those
+records are development evidence, not package performance promises.
 
-## Specification
+## Security posture
 
-[`spec/PROFILE.md`](spec/PROFILE.md) is the sole source of truth for observable
-behavior. Version 0.1.2 defined the owned core contract, input-byte admission, and
-JSON-structure options. Version 0.1.3 adds private RDF output-retention options and
-the guarded semantic-ingestion feature; it omits accepted public CXF syntax, parse
-output, and conformance. Architecture decisions and their compatibility impact are
-recorded in
-[`spec/adr/`](spec/adr/).
+The project is moving toward an admitted, diagnosed, resource-bounded parser,
+but it is **not there yet**. Do not use `cxf-json` or `cxf-ingest-probe` as a
+public parser for untrusted input. Existing input and output limits constrain
+contract-owned copies and project output; they do not bound parser-backend
+allocation, process memory, or execution time.
+
+If you discover a vulnerability and repository private vulnerability reporting
+is enabled, use GitHub’s private security report flow; otherwise open a
+less-detailed public issue and coordinate disclosure through the repository
+maintainer.
+
+## Project documentation
+
+- User overview, capability map, and current boundaries: [`docs/OVERVIEW.md`](docs/OVERVIEW.md)
+- Language surface plan: [`docs/LANGUAGE-SURFACES.md`](docs/LANGUAGE-SURFACES.md)
+- Verification and release posture: [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
+- Normative behavior: [`spec/PROFILE.md`](spec/PROFILE.md)
+- Compatibility decisions: [`spec/adr/`](spec/adr/)
+- Fuzz campaign commands: [`fuzz/README.md`](fuzz/README.md)
+
+`spec/PROFILE.md` is the sole source of truth for observable behavior. ADRs
+explain decisions and compatibility impact; research notes outside `spec/` never
+outrank the profile.
 
 ## Contributing
 
-The parser API and typed CXF model are still being designed. Open an issue before
-starting a large change so its scope and compatibility impact can be agreed before
-implementation.
+This is early public source with a narrow compatibility surface. Open an issue
+before adding a parser API, typed CXF model, language binding, wire format, or
+public resource policy so the behavior and tests can be agreed first.
 
 ## License
 
