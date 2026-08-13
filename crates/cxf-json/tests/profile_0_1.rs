@@ -190,3 +190,19 @@ fn public_errors_implement_standard_error() {
     assert_error::<ParseError>();
     assert_copy::<AdmissionError>();
 }
+
+#[test]
+fn crate_tracks_the_documented_profile_version() {
+    // The profile gate requires every profile change to carry test
+    // updates; this pin pairs the compiled surface with the normative
+    // version string. Bump it with any future profile version change.
+    let profile = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../spec/PROFILE.md"
+    ))
+    .expect("spec/PROFILE.md must be readable from the crate tests");
+    assert!(
+        profile.contains("Profile version: 0.1.6"),
+        "profile version pin is stale"
+    );
+}

@@ -28,7 +28,7 @@
 //! silently dropped. `@included` members collect nodes like `@graph`;
 //! node-scoped `@context` members leave evidence but are never applied —
 //! compacted registration follows the root context only. All behavior here
-//! remains crate-private; profile 0.1.5 public exports are unchanged.
+//! remains crate-private; profile 0.1.6 public exports are unchanged.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -872,6 +872,10 @@ impl ProjectionEdge {
 
     pub(crate) const fn data_type(&self) -> Option<DataTypeKind> {
         self.data_type
+    }
+
+    pub(crate) const fn token(&self) -> &Range<usize> {
+        &self.token
     }
 }
 
