@@ -342,12 +342,15 @@ mod w016;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use oxrdf::{BlankNode, GraphName, Literal, NamedNode, Quad, Term};
 
     use super::*;
-    use crate::{DocumentIri, json::PreflightFailure, ordered::OrderedValue};
+    use crate::{
+        DocumentIri, json::PreflightFailure, ordered::OrderedValue,
+        projection::Term as ProjectionTerm,
+    };
 
     const COMPACT: &[u8] = include_bytes!("../tests/fixtures/cxf-compact.jsonld");
     const FULL_IRI: &[u8] = include_bytes!("../tests/fixtures/cxf-full-iri.jsonld");
@@ -359,6 +362,7 @@ mod tests {
     const REMOTE_CONTEXT: &[u8] = include_bytes!("../tests/fixtures/remote-context.jsonld");
     const COMPOSITION_BOUNDARY: &[u8] =
         include_bytes!("../tests/projection/cxf-proj-composition.jsonld");
+    const SPEC_FORM: &[u8] = include_bytes!("../tests/projection/cxf-proj-specform.jsonld");
     const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
     const S231_BLOCK: &str = "http://data.ashrae.org/S231P#Block";
 
@@ -431,6 +435,99 @@ mod tests {
             document.validation_findings()[0].code().as_str(),
             "CXF-V-005"
         );
+    }
+
+    #[test]
+    fn composition_keeps_authored_order_independent_from_equal_rdf_evidence() {
+        let first = ingest_project_validate(ORDER_A, &options())
+            .expect("first order fixture should compose");
+        let second = ingest_project_validate(ORDER_B, &options())
+            .expect("second order fixture should compose");
+
+        assert_eq!(first.source_document().as_bytes(), ORDER_A);
+        assert_eq!(second.source_document().as_bytes(), ORDER_B);
+        assert_eq!(quad_multiset(&first), quad_multiset(&second));
+
+        for document in [&first, &second] {
+            assert_eq!(document.projection().nodes().len(), 3);
+            assert_eq!(document.projection().metrics().edges, 2);
+            assert_eq!(document.projection().metrics().resolved_edges, 2);
+            assert!(document.projection().diagnostics().is_empty());
+            assert!(document.validation_findings().is_empty());
+        }
+        assert_eq!(
+            projection_edge_targets(
+                &first,
+                "ex:Root",
+                "http://data.ashrae.org/S231P#",
+                ProjectionTerm::ContainsBlock,
+            ),
+            ["ex:Root.first", "ex:Root.second"]
+        );
+        assert_eq!(
+            projection_edge_targets(
+                &second,
+                "ex:Root",
+                "http://data.ashrae.org/S231P#",
+                ProjectionTerm::ContainsBlock,
+            ),
+            ["ex:Root.second", "ex:Root.first"]
+        );
+    }
+
+    #[test]
+    fn spec_form_fixture_composes_without_losing_stage_evidence() {
+        let document = ingest_project_validate(SPEC_FORM, &options())
+            .expect("owned spec-form fixture should compose");
+        let projection = document.projection();
+
+        assert_eq!(document.source_document().as_bytes(), SPEC_FORM);
+        assert_eq!(document.quads().len(), 32);
+        assert_eq!(document.semantic_metrics().emitted_rdf_quads, 32);
+        assert_eq!(projection.metrics().nodes, 10);
+        assert_eq!(projection.metrics().edges, 15);
+        assert_eq!(projection.metrics().resolved_edges, 10);
+        assert_eq!(projection.metrics().extension_members, 0);
+        assert!(projection.diagnostics().is_empty());
+        assert!(document.validation_findings().is_empty());
+
+        assert_eq!(
+            projection_edge_targets(
+                &document,
+                "ExamplePackage.ExampleSeq",
+                "http://data.ashrae.org/S231#",
+                ProjectionTerm::HasInstance,
+            ),
+            [
+                "ExamplePackage.ExampleSeq#gain",
+                "ExamplePackage.ExampleSeq#ext"
+            ]
+        );
+        assert_eq!(
+            projection_edge_targets(
+                &document,
+                "ExamplePackage.ExampleSeq#gain",
+                "http://data.ashrae.org/S231#",
+                ProjectionTerm::HasInstance,
+            ),
+            [
+                "ExamplePackage.ExampleSeq#gain.k",
+                "ExamplePackage.ExampleSeq#gain.u",
+                "ExamplePackage.ExampleSeq#gain.y"
+            ]
+        );
+        assert!(has_named_quad(
+            &document,
+            "https://example.test/cxf-specform/ExamplePackage",
+            RDF_TYPE,
+            "http://data.ashrae.org/S231#Package",
+        ));
+        assert!(has_named_quad(
+            &document,
+            "https://example.test/cxf-specform/ExamplePackage.ExampleSeq#gain.y",
+            "http://data.ashrae.org/S231#connectedTo",
+            "https://example.test/cxf-specform/ExamplePackage.ExampleSeq#y",
+        ));
     }
 
     #[test]
@@ -812,5 +909,48 @@ mod tests {
                 _ => panic!("@id should be a string"),
             })
             .collect()
+    }
+
+    fn projection_edge_targets<'a>(
+        document: &'a ComposedDocument,
+        subject: &str,
+        predicate_namespace: &str,
+        predicate: ProjectionTerm,
+    ) -> Vec<&'a str> {
+        let projection = document.projection();
+        projection
+            .edges()
+            .iter()
+            .filter(|edge| {
+                projection.nodes()[edge.subject()].id_spelling() == Some(subject)
+                    && edge.predicate().namespace_iri() == predicate_namespace
+                    && edge.predicate().term() == predicate
+            })
+            .map(crate::projection::ProjectionEdge::target_spelling)
+            .collect()
+    }
+
+    fn has_named_quad(
+        document: &ComposedDocument,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+    ) -> bool {
+        document.quads().iter().any(|quad| {
+            matches!(
+                &quad.subject,
+                NamedOrBlankNode::NamedNode(node) if node.as_str() == subject
+            ) && quad.predicate.as_str() == predicate
+                && matches!(&quad.object, Term::NamedNode(node) if node.as_str() == object)
+                && quad.graph_name == GraphName::DefaultGraph
+        })
+    }
+
+    fn quad_multiset(document: &ComposedDocument) -> HashMap<&Quad, usize> {
+        let mut quads = HashMap::new();
+        for quad in document.quads() {
+            *quads.entry(quad).or_default() += 1;
+        }
+        quads
     }
 }
