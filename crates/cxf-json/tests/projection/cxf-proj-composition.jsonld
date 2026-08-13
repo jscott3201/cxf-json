@@ -1,0 +1,13 @@
+{
+  "@context": {
+    "S231": "http://data.ashrae.org/S231#",
+    "ex": "https://example.test/data/"
+  },
+  "@graph": [
+    {
+      "@id": "relative-parameter",
+      "@type": "S231:Parameter",
+      "ex:observed": "retained extension"
+    }
+  ]
+}

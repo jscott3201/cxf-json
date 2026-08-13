@@ -33,6 +33,12 @@ register-documented `not undefined` conditional expression); all
 identifiers, labels, descriptions, values, and path strings were authored
 for this repository.
 
+W-027 added `cxf-proj-composition.jsonld` on 2026-08-13 under the same license
+and exclusion terms. It combines a relative authored identifier, a registered
+CXF parameter class, and one project-authored extension predicate to prove that
+JSON-LD acceptance, source projection, and validation remain independent
+evidence. No external fixture structure or content was copied or transformed.
+
 SHA-256 checksums recorded at authoring:
 
 - `8a12848e3d58d0412098ebfb135f6ef7fecacda20cf511da8595c10e8282eef8` `cxf-proj-artifact.jsonld`
@@ -44,3 +50,4 @@ SHA-256 checksums recorded at authoring:
 - `d69d186922e4cb394c555ba64c02c4b9e65d35ab7bcaf213b0917a2e9b43ca68` `cxf-proj-weak.jsonld`
 - `09d4e2201ccc1ee8e23849f70c032dcf57b08e427c9fe8fc97d084b7a4eb4730` `cxf-proj-units.jsonld`
 - `70456176810b2009cb31714628a9d24029a58d259a192d159821c96101dd8b6f` `cxf-proj-annotation.jsonld`
+- `2b25c1e341d6d4faed80a08a5cd2f746b216e483df969e41f18057617d738d32` `cxf-proj-composition.jsonld`
