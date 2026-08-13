@@ -139,8 +139,10 @@ fn class_cannot_be_block(class: NodeClass) -> bool {
     )
 }
 
-/// Sort ordinal for total ordering of findings that share an evidence
-/// token and node (for example V-001 and V-002 on one connection).
+/// Sort ordinal for defensive total ordering of findings: distinct
+/// members carry distinct tokens in practice, but if two findings ever
+/// share a token (for example both endpoints of one block-block
+/// connection member), the ordinal keeps the sequence deterministic.
 const fn code_order(code: ValidationCode) -> u8 {
     match code {
         ValidationCode::ConnectionEndpointNotConnector => 0,
@@ -402,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn v005_absent_values_surface_informationally() {
+    fn v005_absent_values_surface_as_warnings() {
         let (_, findings) = validate_str(
             r#"{
               "@context": { "S231": "http://data.ashrae.org/S231#" },
@@ -446,7 +448,7 @@ mod tests {
             let (document, _) = preflight.into_ordered_document();
             let projection = project(document);
             let findings = validate(&projection);
-            // Informational presence findings (V-005) are legal on real
+            // Warning presence findings (V-005) are legal on real
             // emitter output (C-009); error findings are the control.
             let errors: Vec<&ValidationFinding> = findings
                 .iter()

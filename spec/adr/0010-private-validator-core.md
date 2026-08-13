@@ -22,7 +22,7 @@ rules are spec-decided only (Table 8.2): connection endpoints resolving to
 provably non-connector classes (`CXF-V-001`), connected connectors with known
 disagreeing datatypes (`CXF-V-002`), `isOfDataType` outside its
 connector/parameter/constant domain (`CXF-V-003`), grouping predicates on
-provably non-block classes (`CXF-V-004`), and informational
+provably non-block classes (`CXF-V-004`), and warning-level
 parameter/constant value absence (`CXF-V-005`). Codes are a distinct,
 validator-owned family (`CXF-V-*`) rather than a promotion of projection
 codes, so rule coverage stays versionable through W-016's corpus work.
