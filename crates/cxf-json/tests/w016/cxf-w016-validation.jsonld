@@ -1,0 +1,17 @@
+{
+  "@context": {
+    "S231": "http://data.ashrae.org/S231#"
+  },
+  "@graph": [
+    {"@id":"pMissing","@type":"S231:Parameter"},
+    {"@id":"blockType","@type":"S231:CompositeBlock","S231:isOfDataType":{"@id":"S231:Real"}},
+    {"@id":"connectorGroup","@type":"S231:RealInput","S231:hasParameter":{"@id":"pVal"}},
+    {"@id":"pVal","@type":"S231:Parameter","S231:value":1},
+    {"@id":"realToBlock","@type":"S231:RealOutput","S231:connectedTo":{"@id":"blockEndpoint"},"S231:isConnectedTo":{"@id":"blockEndpoint"}},
+    {"@id":"blockEndpoint","@type":"S231:CompositeBlock"},
+    {"@id":"realMismatch","@type":"S231:RealOutput","S231:connectedTo":{"@id":"integerMismatch"}},
+    {"@id":"integerMismatch","@type":"S231:IntegerInput"},
+    {"@id":"blockSource","@type":"S231:CompositeBlock","S231:connectedTo":{"@id":"blockTarget"}},
+    {"@id":"blockTarget","@type":"S231:CompositeBlock"}
+  ]
+}

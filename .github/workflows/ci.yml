@@ -34,6 +34,11 @@ jobs:
         run: cargo +1.97.1 test --workspace --no-default-features --locked
       - name: Test benchmark aggregation
         run: python3 ci/test-summarize-benchmarks.py
+      - name: Check owned fixture checksums
+        run: |
+          python3 ci/test-fixture-checksums.py
+          python3 ci/check-fixture-checksums.py crates/cxf-json/tests/projection/PROVENANCE.md
+          python3 ci/check-fixture-checksums.py crates/cxf-json/tests/w016/PROVENANCE.md
       - name: Test reachable-history inventory
         run: python3 ci/test-inventory-history.py
       - name: Check repository-owned benchmark corpus

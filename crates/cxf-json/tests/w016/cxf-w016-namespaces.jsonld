@@ -1,0 +1,8 @@
+{
+  "@context": {
+    "legacy": "https://data.ashrae.org/S231P#",
+    "future": "http://data.ashrae.org/S231R#",
+    "S231": "https://example.test/not-cxf#"
+  },
+  "@graph": []
+}

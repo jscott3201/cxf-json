@@ -338,6 +338,9 @@ fn string_bytes(value: &str) -> Option<u64> {
 }
 
 #[cfg(test)]
+mod w016;
+
+#[cfg(test)]
 mod tests {
     use std::collections::HashSet;
 
