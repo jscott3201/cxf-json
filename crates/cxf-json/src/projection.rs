@@ -28,7 +28,7 @@
 //! silently dropped. `@included` members collect nodes like `@graph`;
 //! node-scoped `@context` members leave evidence but are never applied —
 //! compacted registration follows the root context only. All behavior here
-//! remains crate-private; profile 0.1.4 public exports are unchanged.
+//! remains crate-private; profile 0.1.5 public exports are unchanged.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -164,9 +164,9 @@ pub(crate) enum Term {
     ControlledDevice,
     ConditionalExpression,
     HasDisplayUnit,
-    // C2 QUDT unit references (C-018); also registered under S231
-    // generations because vocabulary gating is uniform, though the emitter
-    // only writes them under the QUDT schema namespace.
+    // C2 QUDT unit references (C-018); registered ONLY under the QUDT
+    // schema identity via the per-identity allowlist in
+    // `Vocabulary::allows` — the emitter never writes them under S231.
     HasUnit,
     HasQuantityKind,
 }
@@ -335,7 +335,9 @@ struct ActiveContext {
     prefixes: BTreeMap<Arc<str>, Vocabulary>,
     /// Prefixes mapped to QUDT unit-target namespaces (e.g. the emitter's
     /// `unit` and `q` prefixes; C-018). These activate spelling
-    /// classification only; they never register terms.
+    /// classification only; they never register terms. For duplicate
+    /// context bindings of the same prefix, both maps keep last-write-wins
+    /// order semantics independently.
     unit_prefixes: BTreeMap<Arc<str>, UnitNamespace>,
 }
 
@@ -1511,6 +1513,32 @@ impl ProjectionBuilder<'_> {
         extensions.push(record);
     }
 
+    /// Wrong-shaped unit members (non-reference-object values, objects
+    /// without a usable `@id`, and array items of either shape) diagnose
+    /// with the same malformed-reference code links use, and leave the
+    /// same verbatim extension evidence.
+    fn malformed_unit(
+        &mut self,
+        node: usize,
+        member_name: &Arc<str>,
+        value: &OrderedValue,
+        extensions: &mut Vec<ExtensionRecord>,
+    ) {
+        self.diagnostic(
+            ProjectionCode::MalformedReference,
+            Some(node),
+            value.token().clone(),
+            Some(member_name.clone()),
+        );
+        let record = self.record_extension(
+            Some(node),
+            member_name,
+            value.token().clone(),
+            value_kind(value),
+        );
+        extensions.push(record);
+    }
+
     fn parse_link_object(
         &mut self,
         predicate: TermId,
@@ -1582,16 +1610,83 @@ impl ProjectionBuilder<'_> {
         properties: &mut Vec<NodeProperty>,
         extensions: &mut Vec<ExtensionRecord>,
     ) {
-        // Unit members accept arrays of reference objects per-item, with
-        // wrong-shaped items retained as extension evidence — the same
-        // surface the link contract gives `parse_link_value`.
-        if expected_shape(term_id.term()) == ExpectedPayload::Unit
-            && let OrderedValue::Array { values, .. } = value
-        {
-            for item in values {
-                self.parse_literal(term_id, node, member_name, item, properties, extensions);
+        // Unit members follow the link contract's array and diagnostics
+        // surface: object items index per item, wrong-shaped items
+        // (including nested arrays) diagnose as malformed references with
+        // extension evidence, and the whole array member counts exactly
+        // once toward recognized members when any item indexes — matching
+        // `parse_link_value` member-level counting.
+        if expected_shape(term_id.term()) == ExpectedPayload::Unit {
+            match value {
+                OrderedValue::Array { values, .. } => {
+                    let before = properties.len();
+                    for item in values {
+                        if let OrderedValue::Object { .. } = item {
+                            self.parse_literal(
+                                term_id,
+                                node,
+                                member_name,
+                                item,
+                                properties,
+                                extensions,
+                            );
+                        } else {
+                            self.malformed_unit(node, member_name, item, extensions);
+                        }
+                    }
+                    let added = properties.len() - before;
+                    if added > 0 {
+                        self.recognized_members -= (added - 1) as u64;
+                    }
+                    return;
+                }
+                OrderedValue::Object { members, .. } => {
+                    let spelling: Option<Arc<str>> = members.iter().find_map(|member| {
+                        if &*member.name == "@id"
+                            && let OrderedValue::String { value, .. } = &member.value
+                        {
+                            return Some(value.clone());
+                        }
+                        None
+                    });
+                    let Some(spelling) = spelling else {
+                        self.malformed_unit(node, member_name, value, extensions);
+                        return;
+                    };
+                    let mut target_seen = false;
+                    for member in members {
+                        if &*member.name == "@id"
+                            && !target_seen
+                            && matches!(&member.value, OrderedValue::String { value, .. } if value == &spelling)
+                        {
+                            target_seen = true;
+                            continue;
+                        }
+                        let record = self.record_extension(
+                            Some(node),
+                            &member.name,
+                            member.value.token().clone(),
+                            value_kind(&member.value),
+                        );
+                        extensions.push(record);
+                    }
+                    self.recognized_members += 1;
+                    properties.push(NodeProperty {
+                        term: term_id,
+                        payload: PropertyPayload::Unit(UnitReference {
+                            role: unit_role(term_id.term()),
+                            target_class: classify_unit_target(&spelling, &self.context),
+                            spelling,
+                        }),
+                        token: value.token().clone(),
+                    });
+                    return;
+                }
+                _ => {
+                    self.malformed_unit(node, member_name, value, extensions);
+                    return;
+                }
             }
-            return;
         }
         let payload = match expected_shape(term_id.term()) {
             ExpectedPayload::Text => match value {
@@ -1623,52 +1718,11 @@ impl ProjectionBuilder<'_> {
                 }
                 Ok(PropertyPayload::Value(opaque))
             }
-            // Unit references take the reference-object contract from
-            // `parse_link_object`: the first string `@id` supplies the
-            // target spelling, and every other member (second `@id`,
-            // embedded content) is retained verbatim as extension
-            // evidence. The target is classified, never resolved or
-            // normalized (C-018).
-            ExpectedPayload::Unit => match value {
-                OrderedValue::Object { members, .. } => {
-                    let spelling: Option<Arc<str>> = members.iter().find_map(|member| {
-                        if &*member.name == "@id"
-                            && let OrderedValue::String { value, .. } = &member.value
-                        {
-                            return Some(value.clone());
-                        }
-                        None
-                    });
-                    match spelling {
-                        Some(spelling) => {
-                            let mut target_seen = false;
-                            for member in members {
-                                if &*member.name == "@id"
-                                    && !target_seen
-                                    && matches!(&member.value, OrderedValue::String { value, .. } if value == &spelling)
-                                {
-                                    target_seen = true;
-                                    continue;
-                                }
-                                let record = self.record_extension(
-                                    Some(node),
-                                    &member.name,
-                                    member.value.token().clone(),
-                                    value_kind(&member.value),
-                                );
-                                extensions.push(record);
-                            }
-                            Ok(PropertyPayload::Unit(UnitReference {
-                                role: unit_role(term_id.term()),
-                                target_class: classify_unit_target(&spelling, &self.context),
-                                spelling,
-                            }))
-                        }
-                        None => Err(()),
-                    }
-                }
-                _ => Err(()),
-            },
+            // Unit members are fully handled (or malformed-diagnosed) by
+            // the contract block above this match.
+            ExpectedPayload::Unit => {
+                unreachable!("unit members return before payload building")
+            }
             ExpectedPayload::ExtensionOnly => Err(()),
         };
         match payload {
@@ -3289,7 +3343,7 @@ mod c2_surface_tests {
                   "@type": "S231:Parameter",
                   "S231:hasUnit": { "@id": "unit:PA" },
                   "qudt:label": "cross-namespace probe",
-                  "qudt:hasQuantityKind": [ { "@id": "q:Angle" }, "bad item" ]
+                  "qudt:hasQuantityKind": [ { "@id": "q:Angle" }, "bad item", [ { "@id": "q:Time" } ] ]
                 }
               ]
             }"#,
@@ -3308,12 +3362,30 @@ mod c2_surface_tests {
         let kind = unit_property(node, Term::HasQuantityKind).expect("valid array item indexes");
         assert_eq!(kind.spelling(), "q:Angle");
         assert_eq!(kind.target_class(), UnitTargetClass::QudtQuantityKindIri);
+        // Both wrong-shaped array items (the bare string and the nested
+        // array) leave verbatim extension evidence and diagnose with the
+        // same code malformed link references use.
         assert!(
             node.extensions()
                 .iter()
                 .any(|record| record.kind() == "string"),
             "{:?}",
             node.extensions()
+        );
+        assert!(
+            node.extensions()
+                .iter()
+                .any(|record| record.kind() == "array"),
+            "{:?}",
+            node.extensions()
+        );
+        assert!(
+            projection
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code() == ProjectionCode::MalformedReference),
+            "{:?}",
+            projection.diagnostics()
         );
     }
 

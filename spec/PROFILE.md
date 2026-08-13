@@ -221,7 +221,7 @@ remains available only in the retained source bytes that the projection owns.
 Projection findings, including weakly typed nodes, conflicting type
 assertions, known broken-emitter value artifacts, malformed references,
 unresolved references, and duplicate node identifiers, use the private
-`CXF-P-000` through `CXF-P-006` codes. Version 0.1.4 keeps these codes private;
+`CXF-P-000` through `CXF-P-006` codes. Version 0.1.5 keeps these codes private;
 W-014 owns any future public stabilization.
 
 ## Compatibility
