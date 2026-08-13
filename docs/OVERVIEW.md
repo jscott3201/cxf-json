@@ -30,9 +30,9 @@ validation, and language bindings — are not exposed yet.
 | Structured diagnostics | Type contract only | Code, severity, stage, message, range, pointer, and RDF-term evidence are independent fields |
 | JSON structure options | Reserved ParseOptions | Depth, object-member, total-value, and decoded-name limits are defined but no public parser applies them yet |
 | RDF output options | Private semantic boundary | Quad and retained-term limits govern private project output, not backend allocation |
-| Typed CXF projection | Not built | Planned in a later profile |
+| Typed CXF projection | Private crate stage | Classified nodes, edges, and opaque values since profile 0.1.4 |
 | Public CXF parse API | Not built | No supported parse entry point |
-| Conformance validation | Not built | No CXF conformance profile yet |
+| Conformance validation | Private validator core | Stable private `CXF-V-*` rule codes since profile 0.1.6; no public validation surface |
 | Untrusted-input safety | Not built | Backend memory, time, diagnostics, and host policy remain open |
 
 ## What the probe demonstrates

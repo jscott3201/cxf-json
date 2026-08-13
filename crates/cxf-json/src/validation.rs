@@ -5,26 +5,21 @@
 //! agree, `isOfDataType` is authored only on connectors, parameters, and
 //! constants, and grouping predicates are authored only on nodes whose
 //! registered class can be a block. The C-008/C-009 register posture holds:
-//! absence is surfaced at informational severity and is never a rejection.
-//! Findings are ordered by authored evidence position (source token start);
-//! the validated document is never discarded. All behavior remains
+//! absence surfaces at `DiagnosticSeverity::Warning` and is never a
+//! rejection. Findings order totally by token, node index, then rule-code
+//! ordinal; the validated document is never discarded. All behavior remains
 //! crate-private; profile 0.1.6 public exports are unchanged.
 
 use std::ops::Range;
 
+use crate::contract::DiagnosticSeverity;
 use crate::projection::{DataTypeKind, EdgeKind, NodeClass, Projection};
 
-/// Severity of one validation finding.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ValidationSeverity {
-    /// The document violates a spec-decided rule.
-    Error,
-    /// Presence information the profile distinguishes but never rejects
-    /// (C-009 posture).
-    Informational,
-}
-
 /// Stable private code allocation for validator rules.
+///
+/// Findings reuse the public `DiagnosticSeverity` type directly (no
+/// parallel private taxonomy): spec-rule violations are `Error`, and the
+/// C-009 presence distinction is `Warning` — processing always continues.
 ///
 /// Codes are crate-private until a later slice or profile version promotes
 /// the validator surface; W-016 owns corpus coverage of each rule.
@@ -60,7 +55,7 @@ impl ValidationCode {
 #[derive(Debug)]
 pub(crate) struct ValidationFinding {
     code: ValidationCode,
-    severity: ValidationSeverity,
+    severity: DiagnosticSeverity,
     node: usize,
     token: Range<usize>,
 }
@@ -70,7 +65,7 @@ impl ValidationFinding {
         self.code
     }
 
-    pub(crate) const fn severity(&self) -> ValidationSeverity {
+    pub(crate) const fn severity(&self) -> DiagnosticSeverity {
         self.severity
     }
 
@@ -114,6 +109,20 @@ fn class_cannot_be_connector(class: NodeClass) -> bool {
     )
 }
 
+/// V-003's domain check fires only when the class is PROVABLY outside the
+/// connector/parameter/constant domain. Weakly typed and library-typed
+/// subjects are unknown, not wrong (C-008/C-015 posture, C-320 evidence).
+fn class_outside_data_type_domain(class: NodeClass) -> bool {
+    matches!(
+        class,
+        NodeClass::Package
+            | NodeClass::Block(_)
+            | NodeClass::EnumerationType
+            | NodeClass::DataType
+            | NodeClass::Text
+    )
+}
+
 /// Rules that never fire on nodes whose block role is unknown rather than
 /// disproven: weakly typed and library-typed nodes get the benefit of the
 /// doubt (C-008, C-015).
@@ -130,8 +139,21 @@ fn class_cannot_be_block(class: NodeClass) -> bool {
     )
 }
 
+/// Sort ordinal for total ordering of findings that share an evidence
+/// token and node (for example V-001 and V-002 on one connection).
+const fn code_order(code: ValidationCode) -> u8 {
+    match code {
+        ValidationCode::ConnectionEndpointNotConnector => 0,
+        ValidationCode::ConnectionDataTypeMismatch => 1,
+        ValidationCode::DataTypeOutsideDomain => 2,
+        ValidationCode::GroupingOutsideBlock => 3,
+        ValidationCode::ParameterValueAbsent => 4,
+    }
+}
+
 /// Validates a projection with the C1 rule set, returning findings ordered
-/// by authored evidence position. The projection is borrowed, not consumed.
+/// by authored evidence position (token start), then node index, then rule
+/// code. The projection is borrowed, not consumed.
 pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
     let mut findings = Vec::new();
     let nodes = projection.nodes();
@@ -145,36 +167,39 @@ pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
                         if class_cannot_be_connector(nodes[endpoint].class()) {
                             findings.push(ValidationFinding {
                                 code: ValidationCode::ConnectionEndpointNotConnector,
-                                severity: ValidationSeverity::Error,
+                                severity: DiagnosticSeverity::Error,
                                 node: endpoint,
                                 token: edge.token().clone(),
                             });
                         }
                     }
-                    let subject_type = effective_data_type(projection, edge.subject());
-                    let target_type = effective_data_type(projection, target);
-                    if let (Some(subject_type), Some(target_type)) = (subject_type, target_type)
-                        && subject_type != target_type
+                    // Datatype comparison is connector-scoped: a
+                    // non-connector endpoint already carries V-001 and is
+                    // never re-judged here.
+                    if matches!(nodes[edge.subject()].class(), NodeClass::Connector(_))
+                        && matches!(nodes[target].class(), NodeClass::Connector(_))
                     {
-                        findings.push(ValidationFinding {
-                            code: ValidationCode::ConnectionDataTypeMismatch,
-                            severity: ValidationSeverity::Error,
-                            node: edge.subject(),
-                            token: edge.token().clone(),
-                        });
+                        let subject_type = effective_data_type(projection, edge.subject());
+                        let target_type = effective_data_type(projection, target);
+                        if let (Some(subject_type), Some(target_type)) = (subject_type, target_type)
+                            && subject_type != target_type
+                        {
+                            findings.push(ValidationFinding {
+                                code: ValidationCode::ConnectionDataTypeMismatch,
+                                severity: DiagnosticSeverity::Error,
+                                node: edge.subject(),
+                                token: edge.token().clone(),
+                            });
+                        }
                     }
                 }
             }
             EdgeKind::DataType => {
                 let subject = edge.subject();
-                let in_domain = matches!(
-                    nodes[subject].class(),
-                    NodeClass::Connector(_) | NodeClass::Parameter | NodeClass::Constant
-                );
-                if !in_domain {
+                if class_outside_data_type_domain(nodes[subject].class()) {
                     findings.push(ValidationFinding {
                         code: ValidationCode::DataTypeOutsideDomain,
-                        severity: ValidationSeverity::Error,
+                        severity: DiagnosticSeverity::Error,
                         node: subject,
                         token: edge.token().clone(),
                     });
@@ -185,7 +210,7 @@ pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
                 if class_cannot_be_block(nodes[subject].class()) {
                     findings.push(ValidationFinding {
                         code: ValidationCode::GroupingOutsideBlock,
-                        severity: ValidationSeverity::Error,
+                        severity: DiagnosticSeverity::Error,
                         node: subject,
                         token: edge.token().clone(),
                     });
@@ -198,20 +223,24 @@ pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
         if matches!(node.class(), NodeClass::Parameter | NodeClass::Constant)
             && node.value().is_none()
         {
+            // Absence is surfaced as a warning; processing continues and
+            // nothing is rejected (C-009).
             findings.push(ValidationFinding {
                 code: ValidationCode::ParameterValueAbsent,
-                severity: ValidationSeverity::Informational,
+                severity: DiagnosticSeverity::Warning,
                 node: index,
                 token: node.token().clone(),
             });
         }
     }
-    // Deterministic output: authored evidence position, then node index.
+    // Deterministic total order: authored evidence position, node index,
+    // then rule-code ordinal.
     findings.sort_by(|left, right| {
         left.token
             .start
             .cmp(&right.token.start)
             .then(left.node.cmp(&right.node))
+            .then(code_order(left.code).cmp(&code_order(right.code)))
     });
     findings
 }
@@ -265,7 +294,7 @@ mod tests {
         assert!(
             findings
                 .iter()
-                .all(|finding| finding.severity() == ValidationSeverity::Error)
+                .all(|finding| finding.severity() == DiagnosticSeverity::Error)
         );
     }
 
@@ -297,6 +326,45 @@ mod tests {
             }"#,
         );
         assert_eq!(codes(&unknown).len(), 0, "{unknown:?}");
+    }
+
+    #[test]
+    fn v002_is_connector_scoped() {
+        // A datatype-carrying PARAMETER connected to a typed output fires
+        // V-001 for the non-connector endpoint and is never re-judged as a
+        // datatype mismatch.
+        let (_, findings) = validate_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                { "@id": "ex:p", "@type": "S231:Parameter",
+                  "S231:isOfDataType": { "@id": "S231:Integer" },
+                  "S231:value": 1,
+                  "S231:connectedTo": { "@id": "ex:r" } },
+                { "@id": "ex:r", "@type": "S231:RealOutput" }
+              ]
+            }"#,
+        );
+        assert_eq!(
+            codes(&findings),
+            &[ValidationCode::ConnectionEndpointNotConnector],
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn v003_unknown_node_classes_stay_quiet() {
+        let (_, findings) = validate_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                { "@id": "ex:weak", "S231:isOfDataType": { "@id": "S231:Real" } },
+                { "@id": "ex:lib", "@type": "ex:Vendor.CustomType",
+                  "S231:isOfDataType": { "@id": "S231:Real" } }
+              ]
+            }"#,
+        );
+        assert_eq!(codes(&findings).len(), 0, "{findings:?}");
     }
 
     #[test]
@@ -345,7 +413,7 @@ mod tests {
             }"#,
         );
         assert_eq!(codes(&findings), &[ValidationCode::ParameterValueAbsent]);
-        assert_eq!(findings[0].severity(), ValidationSeverity::Informational);
+        assert_eq!(findings[0].severity(), DiagnosticSeverity::Warning);
     }
 
     #[test]
@@ -382,7 +450,7 @@ mod tests {
             // emitter output (C-009); error findings are the control.
             let errors: Vec<&ValidationFinding> = findings
                 .iter()
-                .filter(|finding| finding.severity() == ValidationSeverity::Error)
+                .filter(|finding| finding.severity() == DiagnosticSeverity::Error)
                 .collect();
             assert!(errors.is_empty(), "{name}: {errors:?}");
         }

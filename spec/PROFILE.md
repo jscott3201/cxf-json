@@ -226,18 +226,28 @@ W-014 owns any future public stabilization.
 ## Private validator core
 
 The crate's private validator consumes the projection without discarding the
-parsed CXF document and evaluates spec-decided rules only. Connection
-endpoints that resolve to provably non-connector classes (never weakly typed
-or library-typed nodes, per C-008/C-015), connected connectors carrying
-known disagreeing datatypes, `isOfDataType` authored outside its
-connector/parameter/constant domain, and grouping predicates authored on
-provably non-block classes each MUST emit a stable private finding code
-(`CXF-V-001` through `CXF-V-004`). Parameters and constants without a `value`
-property MUST surface at informational severity (`CXF-V-005`, C-009) and MUST
-NOT be rejected. Findings MUST order deterministically by authored evidence
-position and carry source-token evidence. Version 0.1.6 keeps `CXF-V-*` codes
-private; W-016 owns negative-corpus coverage, and a later profile decides any
-public stabilization.
+parsed CXF document. Rules combine OBC specification Table 8.2 constraints
+with the frozen register postures C-008, C-009, and C-015: an error fires
+only when a node's registered class is provably out of domain; unknown
+(weakly typed) or library-typed classes are never treated as disproven.
+Absent `value` members are surfaced and never rejected. The private code
+allocation is normative:
+
+| Code | Rule | Severity |
+|---|---|---|
+| `CXF-V-001` | A connection endpoint resolves to a node whose class is provably non-connector (Package, Block, Parameter, Constant, EnumerationType, DataType, or String) | Error |
+| `CXF-V-002` | Both connection endpoints are connectors whose statically known datatypes disagree (unknown never disagrees) | Error |
+| `CXF-V-003` | `isOfDataType` is authored on a node whose class is provably outside the connector/parameter/constant domain | Error |
+| `CXF-V-004` | A grouping predicate (`hasInput`/`hasOutput`/`hasParameter`/`hasConstant`) is authored on a node whose class is provably non-block | Error |
+| `CXF-V-005` | A Parameter or Constant has no `value` property (C-009) | Warning |
+
+Findings reuse the public `DiagnosticSeverity` type, carry the rule code,
+node index, and the source token of the evidenced member, and MUST order
+deterministically by token start, then node index, then rule-code ordinal.
+Rules that never fire include anything whose evidence depends on weakly
+typed or library-typed nodes. Version 0.1.6 keeps `CXF-V-*` codes private;
+W-016 owns negative-corpus coverage, and a later profile decides any public
+stabilization.
 
 ## Compatibility
 

@@ -41,3 +41,13 @@ fires; absence is surfaced informationally and never rejects.
   owner of namespace acceptance policy and stays unblocked.
 - The `CXF-V-*` allocation is the stability target W-016 and any future
   public validator surface pin against.
+- Deferred with reasons: cardinality and duplicate-shape rules (W-016 owns
+  corpus-driven coverage), namespace acceptance (W-015), expression and
+  conditional semantics (no spec constraint decides them yet), and
+  connector-direction rules (input↔input connections are not judged in C1:
+  direction correctness needs vendor-class connectorshape evidence the
+  register does not yet record). Dual-authored `connectedTo` +
+  `isConnectedTo` members (the C-001 norm) each yield their own findings;
+  deduplication is a W-016 corpus decision, not a C1 rule.
+- Severity reuses the public `DiagnosticSeverity` enum (`Error` /
+  `Warning`) so a later promotion needs no taxonomy mapping.
