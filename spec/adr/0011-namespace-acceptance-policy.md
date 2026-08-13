@@ -36,14 +36,31 @@ the retained (last-write-wins) binding once per prefix:
 - `CXF-C-002` (Warning) for an unregistered namespace under a known family
   host (`data.ashrae.org`, `qudt.org`) — the actionable new-generation
   signal;
-- `CXF-C-003` (Error) for a registered prefix bound to an unexpected
-  namespace (`S231`/`S231P`/`qudt`/`unit`/`q`), because the binding cannot
-  serve its conventional purpose: compacted spellings already fail
-  registration by the existing gating, so the finding names the loss
-  instead of silently mis-mapping it.
+- `CXF-C-003` (Warning) for a registered prefix bound to an unexpected
+  namespace (`S231`/`S231P`/`qudt`/`unit`/`q`): the binding cannot serve
+  its conventional purpose and its compacted spellings fail registration.
+
+All policy findings are warnings, not errors. `DiagnosticSeverity::Error`
+means "processing cannot satisfy the active contract"; observational
+policy always continues processing, retains the document, and falls back
+to extension evidence with distinct identity — so no policy finding may
+claim Error until acceptance behavior becomes rejecting, which this ADR
+explicitly defers.
+
+Two structural guarantees ground the matrix: (1) activations are computed
+from retained bindings only — last-write-wins across context arrays — so
+activation and policy observations cannot disagree; (2) JSON-LD keyword
+members of a context object (`@base`, `@vocab`, `@language`, ...) are not
+prefix bindings and never produce observations.
 
 Duplicate prefix bindings inside one context object fail at W-011
 preflight as duplicate JSON members, so the policy layer never sees them.
+
+Predicate variance completes OQ-004's matrix: distinct spellings are
+accepted as authored and retain distinct identity (C-001/C-002/C-016);
+recognition never asserts global equivalence. This ADR does not close
+OQ-004's *producer-version fixture* leg (recognition coverage per known
+producer version), which stays with owned fixtures as documented.
 
 ## Consequences
 

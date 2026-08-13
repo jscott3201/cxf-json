@@ -222,7 +222,7 @@ remains available only in the retained source bytes that the projection owns.
 Projection findings, including weakly typed nodes, conflicting type
 assertions, known broken-emitter value artifacts, malformed references,
 unresolved references, and duplicate node identifiers, use the private
-`CXF-P-000` through `CXF-P-006` codes. Version 0.1.6 keeps these codes private;
+`CXF-P-000` through `CXF-P-006` codes. Version 0.1.7 keeps these codes private;
 W-014 owns any future public stabilization.
 
 ## Private validator core
@@ -248,17 +248,21 @@ node index (absent for root-level policy findings), and the source token of
 the evidenced member, and MUST order deterministically by token start, then
 node index, then rule-code ordinal. Rules that never fire include anything
 whose evidence depends on weakly typed or library-typed nodes. Version
-0.1.6 keeps `CXF-V-*` codes private; W-016 owns negative-corpus coverage,
+0.1.7 keeps `CXF-V-*` codes private; W-016 owns negative-corpus coverage,
 and a later profile decides any public stabilization.
 
 ## Private namespace acceptance policy
 
-The projection retains every declared root `@context` prefix mapping
-verbatim, and the validator classifies each retained mapping exactly once
-(last-write-wins activation order). The acceptance matrix is observational:
-declared mappings classify and may diagnose, but no namespace binding is
-rejected at this stage; terms under unregistered namespaces already stay
-verbatim extension evidence with distinct identity (C-001/C-002/C-016).
+For each declared root `@context` prefix mapping the projection retains one
+final binding per prefix (last-write-wins across context arrays; activation
+and policy observations can never disagree because activations are computed
+from the retained bindings only). The validator classifies each retained
+binding exactly once. The acceptance matrix is observational: bindings
+classify and may diagnose, but no namespace binding is rejected at this
+stage; terms under unregistered namespaces already stay verbatim extension
+evidence with distinct identity (C-001/C-002/C-016). JSON-LD keyword members
+(`@base`, `@vocab`, `@language`, ...) are not prefix bindings and MUST NOT
+produce observations.
 
 | Declared mapping | Acceptance | Finding |
 |---|---|---|
@@ -269,14 +273,26 @@ verbatim extension evidence with distinct identity (C-001/C-002/C-016).
 | `http://qudt.org/vocab/unit#`, `http://qudt.org/vocab/quantitykind#` | Accepted as target-classification buckets | none |
 | Unregistered namespace under a known family host (`data.ashrae.org`, `qudt.org`) | Observed: possible new generation variant | `CXF-C-002` Warning |
 | Other foreign namespaces (for example `ex` data namespaces) | Observed silently; misuse already lands in extension records | none |
-| A registered prefix (`S231`, `S231P`, `qudt`, `unit`, `q`) bound to an unexpected namespace | Shadowed: the binding cannot serve its conventional purpose | `CXF-C-003` Error |
+| A registered prefix (`S231`, `S231P`, `qudt`, `unit`, `q`) bound to an unexpected namespace | Shadowed: the binding cannot serve its conventional purpose | `CXF-C-003` Warning |
 
 Prefix expectations are `S231` → any registered S231 generation,
 `S231P` → S231P generations, `qudt` → the QUDT schema namespace, and
-`unit`/`q` → the matching QUDT vocab namespace. `CXF-C-*` codes follow the
-same ordering, evidence, and severity-type rules as `CXF-V-*` and stay
-private in 0.1.7; full-IRI term spellings used without a context binding
-do not diagnose at the term level in this slice.
+`unit`/`q` → the matching QUDT vocab namespace. Rows are evaluated
+shadow-first: a shadowed known-prefix binding emits `CXF-C-003` only.
+All policy findings are warnings because processing continues and the
+document is retained; rejection behavior remains concentrated in W-011
+preflight. `CXF-C-*` codes follow the same ordering, evidence, and
+severity-type rules as `CXF-V-*` and stay private in 0.1.7; full-IRI term
+spellings used without a context binding do not diagnose at the term level
+in this slice.
+
+Predicate-variance policy, completing the OQ-004 matrix: distinct spec and
+emitter predicate spellings — `connectedTo` versus `isConnectedTo`, both
+namespace generations, and QUDT identities — are accepted as authored and
+retain distinct internal identity. Recognition MUST NOT assert that
+distinct IRIs are globally equivalent. That acceptance is the register's
+C-001/C-002/C-016 discipline, now stated as policy rather than behavior
+alone.
 
 ## Compatibility
 

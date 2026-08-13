@@ -413,42 +413,59 @@ impl NamespaceObservation {
 }
 
 fn activate_context(members: &[OrderedMember]) -> ActiveContext {
-    let mut active = ActiveContext::default();
+    // Pass 1: collect declared prefix bindings in order. Duplicate bindings
+    // of one prefix resolve last-write-wins — the activation and the policy
+    // observations must agree on exactly one retained binding, so only the
+    // retained one is kept. JSON-LD keyword members (`@base`, `@vocab`,
+    // `@language`, …) are not prefix bindings and are excluded.
+    let mut bindings: BTreeMap<Arc<str>, (Arc<str>, Range<usize>)> = BTreeMap::new();
     for member in members {
         if &*member.name == "@context" {
-            activate_context_value(&member.value, &mut active);
+            collect_context_bindings(&member.value, &mut bindings);
         }
+    }
+    // Pass 2: activate terms/unit buckets and record one observation per
+    // retained binding — activation and policy can never diverge.
+    let mut active = ActiveContext::default();
+    for (prefix, (namespace, token)) in bindings {
+        if let Some(vocabulary) = vocabulary_for_namespace(&namespace) {
+            active.prefixes.insert(prefix.clone(), vocabulary);
+        }
+        if let Some(bucket) = UnitNamespace::for_iri(&namespace) {
+            active.unit_prefixes.insert(prefix.clone(), bucket);
+        }
+        active.observations.push(NamespaceObservation {
+            prefix,
+            iri: namespace.clone(),
+            class: NamespaceClass::from_iri(&namespace),
+            token: token.clone(),
+        });
     }
     active
 }
 
-fn activate_context_value(value: &OrderedValue, active: &mut ActiveContext) {
+fn collect_context_bindings(
+    value: &OrderedValue,
+    bindings: &mut BTreeMap<Arc<str>, (Arc<str>, Range<usize>)>,
+) {
     match value {
         OrderedValue::Object { members, .. } => {
             for member in members {
+                if member.name.starts_with('@') {
+                    continue;
+                }
                 if let OrderedValue::String {
                     value: namespace,
                     token,
                 } = &member.value
                 {
-                    if let Some(vocabulary) = vocabulary_for_namespace(namespace) {
-                        active.prefixes.insert(member.name.clone(), vocabulary);
-                    }
-                    if let Some(bucket) = UnitNamespace::for_iri(namespace) {
-                        active.unit_prefixes.insert(member.name.clone(), bucket);
-                    }
-                    active.observations.push(NamespaceObservation {
-                        prefix: member.name.clone(),
-                        iri: namespace.clone(),
-                        class: NamespaceClass::from_iri(namespace),
-                        token: token.clone(),
-                    });
+                    bindings.insert(member.name.clone(), (namespace.clone(), token.clone()));
                 }
             }
         }
         OrderedValue::Array { values, .. } => {
             for value in values {
-                activate_context_value(value, active);
+                collect_context_bindings(value, bindings);
             }
         }
         _ => {}

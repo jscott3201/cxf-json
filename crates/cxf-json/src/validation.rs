@@ -51,7 +51,10 @@ pub(crate) enum ValidationCode {
     UnregisteredFamilyNamespace,
     /// A registered prefix (`S231`/`S231P`/`qudt`/`unit`/`q`) is bound to
     /// a namespace outside its expected set: the binding cannot serve its
-    /// obvious purpose and compacted spellings already fail registration.
+    /// obvious purpose and compacted spellings do not register. Staying a
+    /// warning per the observational policy: processing continues, the
+    /// document is retained, and affected terms fall back to extension
+    /// evidence with distinct identity.
     ShadowedPrefix,
 }
 
@@ -271,12 +274,11 @@ pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
         if let Some(code) =
             policy_finding(observation.prefix(), observation.iri(), observation.class())
         {
+            // All acceptance-policy findings are warnings: processing
+            // continues and the document is retained (ADR 0011).
             findings.push(ValidationFinding {
                 code,
-                severity: match code {
-                    ValidationCode::ShadowedPrefix => DiagnosticSeverity::Error,
-                    _ => DiagnosticSeverity::Warning,
-                },
+                severity: DiagnosticSeverity::Warning,
                 node: None,
                 token: observation.token().clone(),
             });
@@ -582,8 +584,8 @@ mod tests {
     }
 
     #[test]
-    fn shadowed_prefix_is_an_error() {
-        let (_, findings) = validate_str(
+    fn shadowed_prefix_is_a_warning() {
+        let (projection, findings) = validate_str(
             r#"{
               "@context": {
                 "S231": "http://qudt.org/schema/qudt#",
@@ -598,9 +600,60 @@ mod tests {
             findings
                 .iter()
                 .any(|finding| finding.code() == ValidationCode::ShadowedPrefix
-                    && finding.severity() == DiagnosticSeverity::Error),
+                    && finding.severity() == DiagnosticSeverity::Warning),
             "{findings:?}"
         );
+        // The shadowed binding never registers its compacted spellings:
+        // `@type: S231:Parameter` keeps the node library-typed, and
+        // `S231:value` remains extension evidence.
+        let node = &projection.nodes()[0];
+        assert_eq!(node.class(), crate::projection::NodeClass::LibraryInstance);
+        assert_eq!(node.extensions().len(), 1, "{:?}", node.extensions());
+    }
+
+    #[test]
+    fn rebinding_to_foreign_iri_deregisters_terms() {
+        // A context ARRAY rebinding `S231` to a foreign IRI must make
+        // activation and policy agree: the retained binding shadows, and
+        // the earlier registered binding must NOT linger in activation.
+        let (projection, findings) = validate_str(
+            r#"{
+              "@context": [
+                { "S231": "http://data.ashrae.org/S231#" },
+                { "S231": "https://vocab.example.org/other#" }
+              ],
+              "@graph": [
+                { "@id": "ex:a", "@type": "S231:Parameter" }
+              ]
+            }"#,
+        );
+        assert_eq!(
+            codes(&findings),
+            &[ValidationCode::ShadowedPrefix],
+            "{findings:?}"
+        );
+        assert_eq!(
+            projection.nodes()[0].class(),
+            crate::projection::NodeClass::LibraryInstance,
+            "the retained foreign binding must deregister `S231:` spellings"
+        );
+    }
+
+    #[test]
+    fn json_ld_keyword_context_members_produce_no_observations() {
+        // `@base`/`@vocab`/`@language` are not prefix bindings: they must
+        // never produce observations, even under known-family hosts.
+        let (_, findings) = validate_str(
+            r#"{
+              "@context": {
+                "S231": "http://data.ashrae.org/S231#",
+                "@base": "http://data.ashrae.org/base",
+                "@vocab": "http://qudt.org/schema/other#",
+                "@language": "en"
+              }
+            }"#,
+        );
+        assert_eq!(findings.len(), 0, "{findings:?}");
     }
 
     #[test]
