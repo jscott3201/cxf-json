@@ -1,0 +1,10 @@
+{
+  "@context": {
+    "S231": "http://data.ashrae.org/S231#"
+  },
+  "@graph": [
+    {"@id":"weak"},
+    {"@id":"conflict","@type":["S231:Parameter","S231:Constant"],"S231:value":"{ terms: [Array] }","S231:containsBlock":["malformed-a","malformed-b"],"S231:hasInstance":[{"@id":"missing-one"},{"@id":"missing-two"},{"@id":"missing-one"}]},
+    {"@id":"conflict","@type":"S231:Parameter","S231:value":1}
+  ]
+}
