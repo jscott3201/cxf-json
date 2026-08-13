@@ -873,6 +873,10 @@ impl ProjectionEdge {
     pub(crate) const fn data_type(&self) -> Option<DataTypeKind> {
         self.data_type
     }
+
+    pub(crate) const fn token(&self) -> &Range<usize> {
+        &self.token
+    }
 }
 
 /// Block classification for registered `@type` terms.

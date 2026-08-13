@@ -1,23 +1,22 @@
 # CXF project profile
 
-Profile version: 0.1.5
+Profile version: 0.1.6
 
-Status: Core contract with input, JSON-structure, RDF output options, and a
-private typed CXF projection stage; no supported public parser or conformance
-profile.
+Status: Core contract with input, JSON-structure, RDF output options, a
+private typed CXF projection stage, and a private validator core; no supported
+public parser or conformance profile.
 
-Compatibility impact: Additive attribute, unit, and annotation-surface recording
-in the private typed projection without public behavior. ADR 0009 records the
-machine-readable `Additive` classification and supersedes ADR 0008's stale
-statements about namespace registration depth and graphics payloads.
+Compatibility impact: Additive private validator core without public behavior.
+ADR 0010 records the machine-readable `Additive` classification.
 
 ## Scope
 
-Version 0.1.5 defines the owned Rust foundations, input-byte admission, structural
-JSON options, RDF output-retention options, and a private typed CXF projection
-stage used by later CXF ingestion. It does not define accepted public JSON or CXF
-syntax, a supported parse entry point, typed CXF values, extension records,
-validation rules, public JSON-LD processing behavior, context loading, host
+Version 0.1.6 defines the owned Rust foundations, input-byte admission, structural
+JSON options, RDF output-retention options, a private typed CXF projection
+stage, and a private validator core emitting stable rule codes over that
+projection. It does not define accepted public JSON or CXF syntax, a supported
+parse entry point, typed CXF values, extension records, public validation
+rules or codes, public JSON-LD processing behavior, context loading, host
 serialization, or package-release stability.
 
 The `cxf-json` package remains unpublished at package version 0.0.0. Its public
@@ -31,7 +30,7 @@ The crate exports `SourceDocument`, `AdmissionError`, `DocumentIri`,
 `ParseOptions`.
 
 Public signatures MUST NOT expose Serde, OxIRI, OxJSONLD, OxRDF, filesystem, HTTP,
-Python, JavaScript, or other host-runtime values. Profile 0.1.5 defines no Serde
+Python, JavaScript, or other host-runtime values. Profile 0.1.6 defines no Serde
 serialization contract for public core types.
 
 Normal package and documentation builds export only the types listed above. A
@@ -221,8 +220,24 @@ remains available only in the retained source bytes that the projection owns.
 Projection findings, including weakly typed nodes, conflicting type
 assertions, known broken-emitter value artifacts, malformed references,
 unresolved references, and duplicate node identifiers, use the private
-`CXF-P-000` through `CXF-P-006` codes. Version 0.1.5 keeps these codes private;
+`CXF-P-000` through `CXF-P-006` codes. Version 0.1.6 keeps these codes private;
 W-014 owns any future public stabilization.
+
+## Private validator core
+
+The crate's private validator consumes the projection without discarding the
+parsed CXF document and evaluates spec-decided rules only. Connection
+endpoints that resolve to provably non-connector classes (never weakly typed
+or library-typed nodes, per C-008/C-015), connected connectors carrying
+known disagreeing datatypes, `isOfDataType` authored outside its
+connector/parameter/constant domain, and grouping predicates authored on
+provably non-block classes each MUST emit a stable private finding code
+(`CXF-V-001` through `CXF-V-004`). Parameters and constants without a `value`
+property MUST surface at informational severity (`CXF-V-005`, C-009) and MUST
+NOT be rejected. Findings MUST order deterministically by authored evidence
+position and carry source-token evidence. Version 0.1.6 keeps `CXF-V-*` codes
+private; W-016 owns negative-corpus coverage, and a later profile decides any
+public stabilization.
 
 ## Compatibility
 
