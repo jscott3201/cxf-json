@@ -298,8 +298,8 @@ pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
 
 /// Prefix→expected-identity-set mapping for shadow detection. Prefixes are
 /// document-local; these five are registered conventions the emitter and
-/// ecosystem rely on, so binding them to a foreign namespace is the one
-/// shape the policy diagnoses as Error.
+/// ecosystem rely on, so binding them to a foreign namespace earns the
+/// policy's sharpest finding — a warning, per the observational stance.
 fn prefix_shadowed(prefix: &str, class: NamespaceClass) -> bool {
     let expected = match prefix {
         "S231" => [

@@ -28,9 +28,10 @@ discipline of C-001 (emitter/spec predicate spellings as distinct terms).
 Profile 0.1.7 adds a normative namespace acceptance matrix (PROFILE.md,
 "Private namespace acceptance policy") with an **observational** policy:
 input admissibility stays entirely with W-011 preflight, and no context
-binding is rejected. The projection retains each declared root prefix
-mapping verbatim (preserved order), and the validator emits findings from
-the retained (last-write-wins) binding once per prefix:
+binding is rejected. The projection retains the final binding per prefix,
+computed last-write-wins across context arrays (`null` retractions are not
+interpreted, matching the existing gating); the validator emits findings
+once per retained binding:
 
 - `CXF-C-001` (Warning) for a legacy-HTTPS S231P binding (C-002);
 - `CXF-C-002` (Warning) for an unregistered namespace under a known family

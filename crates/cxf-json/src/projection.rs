@@ -339,8 +339,11 @@ struct ActiveContext {
     /// context bindings of the same prefix, both maps keep last-write-wins
     /// order semantics independently.
     unit_prefixes: BTreeMap<Arc<str>, UnitNamespace>,
-    /// One record per declared context mapping, in authored order; the
-    /// acceptance-policy rules (W-015) consume these verbatim.
+    /// One record per RETAINED context binding (last-write-wins per
+    /// prefix), emitted in prefix-lexicographic order; consumers needing
+    /// authored order sort by token. The acceptance-policy rules (W-015)
+    /// consume these precisely because activation and observations are
+    /// built from this same retained map.
     observations: Vec<NamespaceObservation>,
 }
 
@@ -1253,9 +1256,10 @@ impl Projection {
         &self.root_extensions
     }
 
-    /// Every declared root `@context` prefix mapping, verbatim, in authored
-    /// order. The W-015 acceptance-policy rules consume these; the
-    /// projection itself draws no accept/reject conclusions.
+    /// The retained root `@context` prefix bindings, verbatim, one per
+    /// prefix (prefix-lexicographic order). The W-015 acceptance-policy
+    /// rules consume these; the projection itself draws no accept/reject
+    /// conclusions.
     pub(crate) fn namespace_observations(&self) -> &[NamespaceObservation] {
         &self.namespace_observations
     }
