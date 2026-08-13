@@ -342,7 +342,7 @@ mod w016;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use oxrdf::{BlankNode, GraphName, Literal, NamedNode, Quad, Term};
 
@@ -446,10 +446,7 @@ mod tests {
 
         assert_eq!(first.source_document().as_bytes(), ORDER_A);
         assert_eq!(second.source_document().as_bytes(), ORDER_B);
-        assert_eq!(
-            first.quads().iter().collect::<HashSet<_>>(),
-            second.quads().iter().collect::<HashSet<_>>()
-        );
+        assert_eq!(quad_multiset(&first), quad_multiset(&second));
 
         for document in [&first, &second] {
             assert_eq!(document.projection().nodes().len(), 3);
@@ -947,5 +944,13 @@ mod tests {
                 && matches!(&quad.object, Term::NamedNode(node) if node.as_str() == object)
                 && quad.graph_name == GraphName::DefaultGraph
         })
+    }
+
+    fn quad_multiset(document: &ComposedDocument) -> HashMap<&Quad, usize> {
+        let mut quads = HashMap::new();
+        for quad in document.quads() {
+            *quads.entry(quad).or_default() += 1;
+        }
+        quads
     }
 }
