@@ -1,0 +1,47 @@
+{
+  "@context": {
+    "S231": "http://data.ashrae.org/S231#",
+    "qudt": "http://qudt.org/schema/qudt#",
+    "unit": "http://qudt.org/vocab/unit#",
+    "q": "http://qudt.org/vocab/quantitykind#",
+    "ex": "http://example.org#"
+  },
+  "@graph": [
+    {
+      "@id": "ExamplePackage.GainParameters",
+      "@type": "S231:Block",
+      "S231:label": "GainParameters",
+      "S231:hasParameter": [
+        { "@id": "ExamplePackage.GainParameters.kP" },
+        { "@id": "ExamplePackage.GainParameters.flow" }
+      ]
+    },
+    {
+      "@id": "ExamplePackage.GainParameters.kP",
+      "@type": "S231:Parameter",
+      "S231:accessSpecifier": "public",
+      "S231:description": "Proportional gain of the example",
+      "S231:isOfDataType": { "@id": "S231:Real" },
+      "S231:label": "kP",
+      "S231:min": 0,
+      "S231:max": 2,
+      "S231:nominal": { "@value": "0.5", "@type": "http://www.w3.org/2001/XMLSchema#decimal" },
+      "S231:start": 0.5,
+      "S231:fixed": false,
+      "S231:value": 1.5,
+      "qudt:hasUnit": { "@id": "unit:PA" },
+      "S231:hasDisplayUnit": { "@id": "S231:bar" },
+      "qudt:hasQuantityKind": { "@id": "q:PressureDifference" }
+    },
+    {
+      "@id": "ExamplePackage.GainParameters.flow",
+      "@type": "S231:Parameter",
+      "S231:isOfDataType": { "@id": "S231:Real" },
+      "S231:instantiate": true,
+      "qudt:hasUnit": { "@id": "unit:M3-PER-SEC" },
+      "http://qudt.org/schema/qudt#hasUnit": { "@id": "S231:kWh" },
+      "S231:hasDisplayUnit": { "@id": "http://qudt.org/vocab/unit#M3-PER-SEC" },
+      "qudt:hasQuantityKind": { "@id": "http://qudt.org/vocab/quantitykind#Pressure" }
+    }
+  ]
+}

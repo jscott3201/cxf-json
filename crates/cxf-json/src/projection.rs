@@ -1,4 +1,18 @@
-//! Crate-private W-013-C1 typed CXF projection over the ordered source view.
+//! Crate-private W-013-C1/C2 typed CXF projection over the ordered source
+//! view.
+//!
+//! Beyond the section 8.2 core vocabulary, the projection indexes the
+//! emitter attribute, unit, metadata, and annotation surface (register rows
+//! C-017, C-018): parameter attributes (`start`/`nominal`/`min`/`max`/
+//! `fixed`/`instantiate`), unit references (`qudt:hasUnit`,
+//! `S231:hasDisplayUnit`, `qudt:hasQuantityKind`) with verbatim,
+//! never-normalized target spellings, `graphics` and
+//! `conditionalExpression` strings (opaque; C-005/C-006), and the emitter
+//! metadata members (`label`, `description`, `documentation`,
+//! `accessSpecifier`, `controlledDevice` as text; `defaultValue` as an
+//! opaque CXF value; `generatePointlist` as a boolean). `hasFmuPath` is a
+//! verbatim text property; both CDL annotation spellings collapse to the
+//! `ExtensionBlock` type assertion (C-014 closed).
 //!
 //! The projected record classifies the OBC section 8.2 core vocabulary into
 //! owned structures, keeps authored order, preserves unknown and weakly typed
@@ -14,7 +28,7 @@
 //! silently dropped. `@included` members collect nodes like `@graph`;
 //! node-scoped `@context` members leave evidence but are never applied —
 //! compacted registration follows the root context only. All behavior here
-//! remains crate-private; profile 0.1.4 public exports are unchanged.
+//! remains crate-private; profile 0.1.5 public exports are unchanged.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -32,6 +46,10 @@ pub(crate) enum Vocabulary {
     S231,
     S231P,
     S231PLegacyHttps,
+    /// QUDT schema namespace for unit references (C-018). QUDT vocab
+    /// namespaces used for unit *targets* are registered separately as
+    /// namespace buckets, not term vocabularies.
+    QudtSchema,
 }
 
 impl Vocabulary {
@@ -40,15 +58,41 @@ impl Vocabulary {
             Self::S231 => "http://data.ashrae.org/S231#",
             Self::S231P => "http://data.ashrae.org/S231P#",
             Self::S231PLegacyHttps => "https://data.ashrae.org/S231P#",
+            Self::QudtSchema => "http://qudt.org/schema/qudt#",
         }
     }
 }
 
-const VOCABULARIES: [Vocabulary; 3] = [
+const VOCABULARIES: [Vocabulary; 4] = [
+    Vocabulary::S231,
+    Vocabulary::S231P,
+    Vocabulary::S231PLegacyHttps,
+    Vocabulary::QudtSchema,
+];
+
+/// The three S231 generations only; S231-fallback unit targets are
+/// classified against these (C-018).
+const S231_VOCABULARIES: [Vocabulary; 3] = [
     Vocabulary::S231,
     Vocabulary::S231P,
     Vocabulary::S231PLegacyHttps,
 ];
+
+impl Vocabulary {
+    /// Exact per-identity term registration. The three S231 generations
+    /// register the full S231 surface *except* the QUDT unit predicates,
+    /// and the QUDT schema namespace registers only its two observed unit
+    /// predicates: per-identity allowlists keep registration lexical
+    /// instead of a global term×vocabulary cross-product (C-018).
+    const fn allows(self, term: Term) -> bool {
+        match self {
+            Self::S231 | Self::S231P | Self::S231PLegacyHttps => {
+                !matches!(term, Term::HasUnit | Term::HasQuantityKind)
+            }
+            Self::QudtSchema => matches!(term, Term::HasUnit | Term::HasQuantityKind),
+        }
+    }
+}
 
 fn vocabulary_for_namespace(namespace: &str) -> Option<Vocabulary> {
     VOCABULARIES
@@ -108,6 +152,23 @@ pub(crate) enum Term {
     SizeOfDimensions,
     TranslationSoftware,
     TranslationSoftwareVersion,
+    // C2 attribute and annotation surface (C-017).
+    Start,
+    Nominal,
+    Fixed,
+    Instantiate,
+    Min,
+    Max,
+    DefaultValue,
+    GeneratePointlist,
+    ControlledDevice,
+    ConditionalExpression,
+    HasDisplayUnit,
+    // C2 QUDT unit references (C-018); registered ONLY under the QUDT
+    // schema identity via the per-identity allowlist in
+    // `Vocabulary::allows` — the emitter never writes them under S231.
+    HasUnit,
+    HasQuantityKind,
 }
 
 const TERMS: &[Term] = &[
@@ -151,6 +212,19 @@ const TERMS: &[Term] = &[
     Term::SizeOfDimensions,
     Term::TranslationSoftware,
     Term::TranslationSoftwareVersion,
+    Term::Start,
+    Term::Nominal,
+    Term::Fixed,
+    Term::Instantiate,
+    Term::Min,
+    Term::Max,
+    Term::DefaultValue,
+    Term::GeneratePointlist,
+    Term::ControlledDevice,
+    Term::ConditionalExpression,
+    Term::HasDisplayUnit,
+    Term::HasUnit,
+    Term::HasQuantityKind,
 ];
 
 impl Term {
@@ -196,6 +270,19 @@ impl Term {
             Self::SizeOfDimensions => "sizeOfDimensions",
             Self::TranslationSoftware => "translationSoftware",
             Self::TranslationSoftwareVersion => "translationSoftwareVersion",
+            Self::Start => "start",
+            Self::Nominal => "nominal",
+            Self::Fixed => "fixed",
+            Self::Instantiate => "instantiate",
+            Self::Min => "min",
+            Self::Max => "max",
+            Self::DefaultValue => "defaultValue",
+            Self::GeneratePointlist => "generatePointlist",
+            Self::ControlledDevice => "controlledDevice",
+            Self::ConditionalExpression => "conditionalExpression",
+            Self::HasDisplayUnit => "hasDisplayUnit",
+            Self::HasUnit => "hasUnit",
+            Self::HasQuantityKind => "hasQuantityKind",
         }
     }
 
@@ -246,6 +333,12 @@ impl TermId {
 #[derive(Default)]
 struct ActiveContext {
     prefixes: BTreeMap<Arc<str>, Vocabulary>,
+    /// Prefixes mapped to QUDT unit-target namespaces (e.g. the emitter's
+    /// `unit` and `q` prefixes; C-018). These activate spelling
+    /// classification only; they never register terms. For duplicate
+    /// context bindings of the same prefix, both maps keep last-write-wins
+    /// order semantics independently.
+    unit_prefixes: BTreeMap<Arc<str>, UnitNamespace>,
 }
 
 fn activate_context(members: &[OrderedMember]) -> ActiveContext {
@@ -265,9 +358,13 @@ fn activate_context_value(value: &OrderedValue, active: &mut ActiveContext) {
                 if let OrderedValue::String {
                     value: namespace, ..
                 } = &member.value
-                    && let Some(vocabulary) = vocabulary_for_namespace(namespace)
                 {
-                    active.prefixes.insert(member.name.clone(), vocabulary);
+                    if let Some(vocabulary) = vocabulary_for_namespace(namespace) {
+                        active.prefixes.insert(member.name.clone(), vocabulary);
+                    }
+                    if let Some(bucket) = UnitNamespace::for_iri(namespace) {
+                        active.unit_prefixes.insert(member.name.clone(), bucket);
+                    }
                 }
             }
         }
@@ -288,7 +385,9 @@ fn activate_context_value(value: &OrderedValue, active: &mut ActiveContext) {
 fn lookup(spelled: &str, context: &ActiveContext) -> Option<TermId> {
     for vocabulary in VOCABULARIES {
         if let Some(local) = spelled.strip_prefix(vocabulary.namespace_iri()) {
-            return Term::from_local_name(local).map(|term| TermId { vocabulary, term });
+            return Term::from_local_name(local)
+                .filter(|term| vocabulary.allows(*term))
+                .map(|term| TermId { vocabulary, term });
         }
     }
     let (prefix, local) = spelled.split_once(':')?;
@@ -296,15 +395,19 @@ fn lookup(spelled: &str, context: &ActiveContext) -> Option<TermId> {
         return None;
     }
     let vocabulary = *context.prefixes.get(prefix)?;
-    Term::from_local_name(local).map(|term| TermId { vocabulary, term })
+    Term::from_local_name(local)
+        .filter(|term| vocabulary.allows(*term))
+        .map(|term| TermId { vocabulary, term })
 }
 
 /// Resolves an authored `isOfDataType` target spelling to a registered
 /// primitive datatype under the document's registered context.
 fn resolve_data_type(spelling: &str, context: &ActiveContext) -> Option<DataTypeKind> {
+    // Datatype terms only register under S231 generation namespaces; a
+    // QUDT-schema spelling like `qudt:Real` is not a CXF datatype.
     let local = {
         let mut full_iri_match = None;
-        for vocabulary in VOCABULARIES {
+        for vocabulary in S231_VOCABULARIES {
             if let Some(local) = spelling.strip_prefix(vocabulary.namespace_iri()) {
                 full_iri_match = Some(local);
                 break;
@@ -314,7 +417,10 @@ fn resolve_data_type(spelling: &str, context: &ActiveContext) -> Option<DataType
             Some(local) => local,
             None => {
                 let (prefix, local) = spelling.split_once(':')?;
-                context.prefixes.get(prefix)?;
+                let vocabulary = context.prefixes.get(prefix)?;
+                if !S231_VOCABULARIES.contains(vocabulary) {
+                    return None;
+                }
                 local
             }
         }
@@ -326,6 +432,127 @@ fn resolve_data_type(spelling: &str, context: &ActiveContext) -> Option<DataType
         "String" => Some(DataTypeKind::Text),
         _ => None,
     }
+}
+
+/// QUDT vocab namespace buckets used by the emitter for unit target
+/// spellings (C-018).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UnitNamespace {
+    /// `http://qudt.org/vocab/unit#`
+    Unit,
+    /// `http://qudt.org/vocab/quantitykind#`
+    QuantityKind,
+}
+
+impl UnitNamespace {
+    const fn iri(self) -> &'static str {
+        match self {
+            Self::Unit => "http://qudt.org/vocab/unit#",
+            Self::QuantityKind => "http://qudt.org/vocab/quantitykind#",
+        }
+    }
+
+    fn for_iri(namespace: &str) -> Option<Self> {
+        match namespace {
+            "http://qudt.org/vocab/unit#" => Some(Self::Unit),
+            "http://qudt.org/vocab/quantitykind#" => Some(Self::QuantityKind),
+            _ => None,
+        }
+    }
+
+    /// The emitter declares `unit` and `q` as prefix spellings for these
+    /// namespaces; when a compacted spelling's prefix maps here through the
+    /// document context, the target class is known by bucket.
+    const fn target_class(self) -> UnitTargetClass {
+        match self {
+            Self::Unit => UnitTargetClass::QudtUnitIri,
+            Self::QuantityKind => UnitTargetClass::QudtQuantityKindIri,
+        }
+    }
+}
+
+/// Verb shape of one unit-carrying property.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UnitRole {
+    /// `qudt:hasUnit` (S231 `unit` attribute; C-018).
+    Unit,
+    /// `S231:hasDisplayUnit`.
+    DisplayUnit,
+    /// `qudt:hasQuantityKind` (`quantity` attribute).
+    QuantityKind,
+}
+
+/// Classification of a unit target spelling (never normalized; C-018).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UnitTargetClass {
+    /// Full IRI or context-activated compacted spelling of
+    /// `http://qudt.org/vocab/unit#…`.
+    QudtUnitIri,
+    /// Full IRI or context-activated compacted spelling of
+    /// `http://qudt.org/vocab/quantitykind#…`.
+    QudtQuantityKindIri,
+    /// S231-generation fallback spelling (`S231:<raw>`); the emitter uses
+    /// this for units outside its 27-entry mapping table.
+    S231Fallback,
+    /// Anything else, kept verbatim.
+    Other,
+}
+
+/// One unit-kind reference retained with its role and verbatim spelling.
+#[derive(Debug)]
+pub(crate) struct UnitReference {
+    role: UnitRole,
+    spelling: Arc<str>,
+    target_class: UnitTargetClass,
+}
+
+impl UnitReference {
+    pub(crate) const fn role(&self) -> UnitRole {
+        self.role
+    }
+
+    pub(crate) fn spelling(&self) -> &str {
+        &self.spelling
+    }
+
+    pub(crate) const fn target_class(&self) -> UnitTargetClass {
+        self.target_class
+    }
+}
+
+/// Classifies an authored unit target spelling. Full QUDT IRIs always
+/// classify; compacted `unit:`/`q:` spellings classify only when the
+/// document context maps their prefix to the exact QUDT vocab IRI. S231
+/// spellings (full, or compacted through a registered generation prefix)
+/// classify as the emitter's unknown-unit fallback. Nothing resolves
+/// against QUDT and nothing is rewritten (C-018).
+fn classify_unit_target(spelling: &str, context: &ActiveContext) -> UnitTargetClass {
+    for bucket in [UnitNamespace::Unit, UnitNamespace::QuantityKind] {
+        if spelling.starts_with(bucket.iri()) {
+            return bucket.target_class();
+        }
+    }
+    for vocabulary in S231_VOCABULARIES {
+        if spelling.starts_with(vocabulary.namespace_iri()) {
+            return UnitTargetClass::S231Fallback;
+        }
+    }
+    if let Some((prefix, local)) = spelling.split_once(':')
+        && !local.is_empty()
+    {
+        if let Some(bucket) = context.unit_prefixes.get(prefix) {
+            return bucket.target_class();
+        }
+        // Only S231-generation prefixes are the emitter's unknown-unit
+        // fallback shape; a QUDT-schema-prefixed target (or anything else
+        // registered but non-S231) is just `Other`.
+        if let Some(vocabulary) = context.prefixes.get(prefix)
+            && S231_VOCABULARIES.contains(vocabulary)
+        {
+            return UnitTargetClass::S231Fallback;
+        }
+    }
+    UnitTargetClass::Other
 }
 
 /// Private diagnostic code produced by the projection layer.
@@ -395,9 +622,10 @@ impl ProjectionDiagnostic {
 
 /// A member that never entered the typed CXF surface.
 ///
-/// Unrecognized predicate spellings, recognized predicates with unexpected
-/// value shapes, and `graphics` payloads (C-005 posture: opaque, never
-/// interpreted) all land here, verbatim.
+/// Unrecognized predicate spellings and recognized predicates with
+/// unexpected value shapes land here, verbatim. Since C2, `graphics` string
+/// payloads are indexed as text properties (C-005 posture: opaque, never
+/// interpreted); only non-string graphics shapes land here.
 #[derive(Debug)]
 pub(crate) struct ExtensionRecord {
     node: Option<usize>,
@@ -553,6 +781,8 @@ pub(crate) enum PropertyPayload {
     Boolean(bool),
     Unsigned(u64),
     Value(OpaqueValue),
+    /// Unit-kind reference with verbatim spelling and target class (C-018).
+    Unit(UnitReference),
 }
 
 /// One recognized literal-valued member with full term identity.
@@ -1283,6 +1513,32 @@ impl ProjectionBuilder<'_> {
         extensions.push(record);
     }
 
+    /// Wrong-shaped unit members (non-reference-object values, objects
+    /// without a usable `@id`, and array items of either shape) diagnose
+    /// with the same malformed-reference code links use, and leave the
+    /// same verbatim extension evidence.
+    fn malformed_unit(
+        &mut self,
+        node: usize,
+        member_name: &Arc<str>,
+        value: &OrderedValue,
+        extensions: &mut Vec<ExtensionRecord>,
+    ) {
+        self.diagnostic(
+            ProjectionCode::MalformedReference,
+            Some(node),
+            value.token().clone(),
+            Some(member_name.clone()),
+        );
+        let record = self.record_extension(
+            Some(node),
+            member_name,
+            value.token().clone(),
+            value_kind(value),
+        );
+        extensions.push(record);
+    }
+
     fn parse_link_object(
         &mut self,
         predicate: TermId,
@@ -1354,6 +1610,84 @@ impl ProjectionBuilder<'_> {
         properties: &mut Vec<NodeProperty>,
         extensions: &mut Vec<ExtensionRecord>,
     ) {
+        // Unit members follow the link contract's array and diagnostics
+        // surface: object items index per item, wrong-shaped items
+        // (including nested arrays) diagnose as malformed references with
+        // extension evidence, and the whole array member counts exactly
+        // once toward recognized members when any item indexes — matching
+        // `parse_link_value` member-level counting.
+        if expected_shape(term_id.term()) == ExpectedPayload::Unit {
+            match value {
+                OrderedValue::Array { values, .. } => {
+                    let before = properties.len();
+                    for item in values {
+                        if let OrderedValue::Object { .. } = item {
+                            self.parse_literal(
+                                term_id,
+                                node,
+                                member_name,
+                                item,
+                                properties,
+                                extensions,
+                            );
+                        } else {
+                            self.malformed_unit(node, member_name, item, extensions);
+                        }
+                    }
+                    let added = properties.len() - before;
+                    if added > 0 {
+                        self.recognized_members -= (added - 1) as u64;
+                    }
+                    return;
+                }
+                OrderedValue::Object { members, .. } => {
+                    let spelling: Option<Arc<str>> = members.iter().find_map(|member| {
+                        if &*member.name == "@id"
+                            && let OrderedValue::String { value, .. } = &member.value
+                        {
+                            return Some(value.clone());
+                        }
+                        None
+                    });
+                    let Some(spelling) = spelling else {
+                        self.malformed_unit(node, member_name, value, extensions);
+                        return;
+                    };
+                    let mut target_seen = false;
+                    for member in members {
+                        if &*member.name == "@id"
+                            && !target_seen
+                            && matches!(&member.value, OrderedValue::String { value, .. } if value == &spelling)
+                        {
+                            target_seen = true;
+                            continue;
+                        }
+                        let record = self.record_extension(
+                            Some(node),
+                            &member.name,
+                            member.value.token().clone(),
+                            value_kind(&member.value),
+                        );
+                        extensions.push(record);
+                    }
+                    self.recognized_members += 1;
+                    properties.push(NodeProperty {
+                        term: term_id,
+                        payload: PropertyPayload::Unit(UnitReference {
+                            role: unit_role(term_id.term()),
+                            target_class: classify_unit_target(&spelling, &self.context),
+                            spelling,
+                        }),
+                        token: value.token().clone(),
+                    });
+                    return;
+                }
+                _ => {
+                    self.malformed_unit(node, member_name, value, extensions);
+                    return;
+                }
+            }
+        }
         let payload = match expected_shape(term_id.term()) {
             ExpectedPayload::Text => match value {
                 OrderedValue::String { value, .. } => Ok(PropertyPayload::Text(value.clone())),
@@ -1383,6 +1717,11 @@ impl ProjectionBuilder<'_> {
                     );
                 }
                 Ok(PropertyPayload::Value(opaque))
+            }
+            // Unit members are fully handled (or malformed-diagnosed) by
+            // the contract block above this match.
+            ExpectedPayload::Unit => {
+                unreachable!("unit members return before payload building")
             }
             ExpectedPayload::ExtensionOnly => Err(()),
         };
@@ -1449,11 +1788,13 @@ impl ProjectionBuilder<'_> {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum ExpectedPayload {
     Text,
     Boolean,
     Unsigned,
     Opaque,
+    Unit,
     ExtensionOnly,
 }
 
@@ -1465,15 +1806,46 @@ const fn expected_shape(term: Term) -> ExpectedPayload {
         | Term::Documentation
         | Term::AccessSpecifier
         | Term::SizeOfDimensions
+        | Term::ControlledDevice
+        // `graphics` is indexed verbatim as an opaque string (C-005): the
+        // emitter re-serializes annotation objects into text, and #278
+        // shows that text can be syntactically damaged.
+        | Term::Graphics
+        // Conditional-output expressions arrive as strings that #321 shows
+        // can be corrupted (C-006: opaque plus diagnostics).
+        | Term::ConditionalExpression
         | Term::TranslationSoftware
         | Term::TranslationSoftwareVersion => ExpectedPayload::Text,
-        Term::IsFinal | Term::IsArray => ExpectedPayload::Boolean,
+        Term::IsFinal | Term::IsArray | Term::Fixed | Term::GeneratePointlist => {
+            ExpectedPayload::Boolean
+        }
         Term::NumberDimensions => ExpectedPayload::Unsigned,
-        Term::Value => ExpectedPayload::Opaque,
-        // `graphics` payloads stay opaque extension data (C-005 posture);
-        // class terms used as predicates and link terms routed here by
-        // mistake also stay extension data.
+        // Attribute values stay fully opaque, including typed literals like
+        // the `xsd:decimal` nominal shape (C-017).
+        Term::Value
+        | Term::Start
+        | Term::Nominal
+        | Term::Instantiate
+        | Term::Min
+        | Term::Max
+        | Term::DefaultValue => ExpectedPayload::Opaque,
+        Term::HasUnit | Term::HasDisplayUnit | Term::HasQuantityKind => {
+            ExpectedPayload::Unit
+        }
+        // Class terms used as predicates and link terms routed here by
+        // mistake stay extension data.
         _ => ExpectedPayload::ExtensionOnly,
+    }
+}
+
+/// Role mapping for the three unit-carrying terms; only called for terms
+/// routed to `ExpectedPayload::Unit`.
+fn unit_role(term: Term) -> UnitRole {
+    match term {
+        Term::HasUnit => UnitRole::Unit,
+        Term::HasDisplayUnit => UnitRole::DisplayUnit,
+        Term::HasQuantityKind => UnitRole::QuantityKind,
+        _ => unreachable!("only unit-routed terms reach unit_role"),
     }
 }
 
@@ -1862,12 +2234,25 @@ mod tests {
             )]
         );
         assert_eq!(gain.id_form(), &IdentifierForm::Other);
+        // C2: a `graphics` string indexes verbatim as an opaque text
+        // property (C-005 posture: retained, never interpreted); only
+        // non-string graphics shapes would fall back to extension records.
         let graphics = gain
-            .extensions()
+            .properties()
             .iter()
-            .find(|record| record.predicate() == "S231P:graphics")
-            .expect("graphics payload must become extension data");
-        assert_eq!(graphics.kind(), "string");
+            .find_map(|property| {
+                if property.term().term() == Term::Graphics
+                    && let PropertyPayload::Text(text) = property.payload()
+                {
+                    return Some(text.as_ref());
+                }
+                None
+            })
+            .expect("graphics payload must index as verbatim text");
+        assert_eq!(
+            graphics,
+            "Placement(transformation(extent={{-60,-50},{-40,-30}}))"
+        );
 
         // Weakly typed nested instances keep evidence and diagnose (C-008).
         for child in ["gain.k", "gain.u", "gain.y"] {
@@ -1941,8 +2326,8 @@ mod tests {
         assert_eq!(metrics.nodes, 9);
         assert_eq!(metrics.edges, 13);
         assert_eq!(metrics.resolved_edges, 9);
-        assert_eq!(metrics.recognized_members, 22);
-        assert_eq!(metrics.extension_members, 1);
+        assert_eq!(metrics.recognized_members, 23);
+        assert_eq!(metrics.extension_members, 0);
         assert_eq!(metrics.diagnostics, 3);
         assert_eq!(
             projection.source_document().as_bytes(),
@@ -2823,6 +3208,380 @@ mod residual_seam_tests {
             inner.extensions()[0].predicate(),
             "S231P:value",
             "a node-scoped context must not register its prefix"
+        );
+    }
+}
+
+#[cfg(test)]
+mod c2_surface_tests {
+    use super::*;
+    use crate::ParseOptions;
+
+    fn project_str(input: &str) -> Projection {
+        let preflight = crate::json::admit_and_preflight(input.as_bytes(), &ParseOptions::new())
+            .expect("test document must pass preflight");
+        let (document, _) = preflight.into_ordered_document();
+        project(document)
+    }
+
+    fn units_fixture() -> Projection {
+        let bytes = include_bytes!("../tests/projection/cxf-proj-units.jsonld");
+        let preflight = crate::json::admit_and_preflight(bytes, &ParseOptions::new())
+            .expect("units fixture must pass preflight");
+        let (document, _) = preflight.into_ordered_document();
+        project(document)
+    }
+
+    fn text_property(node: &NodeProjection, term: Term) -> Option<&str> {
+        node.properties().iter().find_map(|property| {
+            if property.term().term() == term
+                && let PropertyPayload::Text(text) = property.payload()
+            {
+                return Some(text.as_ref());
+            }
+            None
+        })
+    }
+
+    fn unit_property(node: &NodeProjection, term: Term) -> Option<&UnitReference> {
+        node.properties().iter().find_map(|property| {
+            if property.term().term() == term
+                && let PropertyPayload::Unit(reference) = property.payload()
+            {
+                return Some(reference);
+            }
+            None
+        })
+    }
+
+    /// C-018: the three unit-carrying predicates index verbatim spellings
+    /// with classified targets; the emitter's prefix mapping (`qudt`,
+    /// `unit`, `q`) activates only through the document context.
+    #[test]
+    fn c018_unit_roles_and_target_classes() {
+        let projection = units_fixture();
+        let kpi = projection
+            .nodes()
+            .iter()
+            .find(|node| node.id_spelling() == Some("ExamplePackage.GainParameters.kP"))
+            .expect("kP node must exist");
+
+        let unit = unit_property(kpi, Term::HasUnit).expect("qudt:hasUnit indexed");
+        assert_eq!(unit.role(), UnitRole::Unit);
+        assert_eq!(unit.spelling(), "unit:PA");
+        assert_eq!(unit.target_class(), UnitTargetClass::QudtUnitIri);
+
+        let display = unit_property(kpi, Term::HasDisplayUnit).expect("hasDisplayUnit indexed");
+        assert_eq!(display.role(), UnitRole::DisplayUnit);
+        assert_eq!(display.spelling(), "S231:bar");
+        // Compacted S231 spelling = the emitter's unknown-unit fallback
+        // shape (not normalized, not resolved against QUDT).
+        assert_eq!(display.target_class(), UnitTargetClass::S231Fallback);
+
+        let kind = unit_property(kpi, Term::HasQuantityKind).expect("hasQuantityKind indexed");
+        assert_eq!(kind.role(), UnitRole::QuantityKind);
+        assert_eq!(kind.spelling(), "q:PressureDifference");
+        assert_eq!(kind.target_class(), UnitTargetClass::QudtQuantityKindIri);
+    }
+
+    /// Full QUDT IRIs register as predicates and classify as targets
+    /// without any context prefix; a full S231 target spelling stays the
+    /// emitter's fallback shape.
+    #[test]
+    fn c018_full_iri_predicates_and_targets() {
+        let projection = units_fixture();
+        let flow = projection
+            .nodes()
+            .iter()
+            .find(|node| node.id_spelling() == Some("ExamplePackage.GainParameters.flow"))
+            .expect("flow node must exist");
+        let units: Vec<&UnitReference> = flow
+            .properties()
+            .iter()
+            .filter_map(|property| match property.payload() {
+                PropertyPayload::Unit(reference) if property.term().term() == Term::HasUnit => {
+                    Some(reference)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(units.len(), 2, "{:?}", flow.properties());
+        assert_eq!(units[0].spelling(), "unit:M3-PER-SEC");
+        assert_eq!(units[0].target_class(), UnitTargetClass::QudtUnitIri);
+        // `S231:kWh` — the emitter's unspecified-unit fallback spelling.
+        assert_eq!(units[1].spelling(), "S231:kWh");
+        assert_eq!(units[1].target_class(), UnitTargetClass::S231Fallback);
+
+        let display = unit_property(flow, Term::HasDisplayUnit).expect("full-IRI target indexed");
+        assert_eq!(display.spelling(), "http://qudt.org/vocab/unit#M3-PER-SEC");
+        assert_eq!(display.target_class(), UnitTargetClass::QudtUnitIri);
+        let kind = unit_property(flow, Term::HasQuantityKind).expect("full-IRI target indexed");
+        assert_eq!(
+            kind.spelling(),
+            "http://qudt.org/vocab/quantitykind#Pressure"
+        );
+        assert_eq!(kind.target_class(), UnitTargetClass::QudtQuantityKindIri);
+    }
+
+    /// Exact per-identity registration: `hasUnit`/`hasQuantityKind` only
+    /// exist under the QUDT schema identity, never under an S231
+    /// generation (C-018). An authored `S231:hasUnit` is extension
+    /// evidence, and simple S231 terms never register under `qudt:`.
+    #[test]
+    fn c018_unit_predicates_are_identity_scoped() {
+        let projection = project_str(
+            r#"{
+              "@context": {
+                "S231": "http://data.ashrae.org/S231#",
+                "qudt": "http://qudt.org/schema/qudt#",
+                "unit": "http://qudt.org/vocab/unit#",
+                "q": "http://qudt.org/vocab/quantitykind#"
+              },
+              "@graph": [
+                {
+                  "@id": "ex:t1",
+                  "@type": "S231:Parameter",
+                  "S231:hasUnit": { "@id": "unit:PA" },
+                  "qudt:label": "cross-namespace probe",
+                  "qudt:hasQuantityKind": [ { "@id": "q:Angle" }, "bad item", [ { "@id": "q:Time" } ] ]
+                }
+              ]
+            }"#,
+        );
+        let node = &projection.nodes()[0];
+        let predicates: Vec<&str> = node
+            .extensions()
+            .iter()
+            .map(|record| record.predicate())
+            .collect();
+        // `S231:hasUnit` and `qudt:label` are cross-identity probes; the
+        // array's wrong-shaped string item also leaves evidence, while its
+        // valid reference object still indexes.
+        assert!(predicates.contains(&"S231:hasUnit"), "{predicates:?}");
+        assert!(predicates.contains(&"qudt:label"), "{predicates:?}");
+        let kind = unit_property(node, Term::HasQuantityKind).expect("valid array item indexes");
+        assert_eq!(kind.spelling(), "q:Angle");
+        assert_eq!(kind.target_class(), UnitTargetClass::QudtQuantityKindIri);
+        // Both wrong-shaped array items (the bare string and the nested
+        // array) leave verbatim extension evidence and diagnose with the
+        // same code malformed link references use.
+        assert!(
+            node.extensions()
+                .iter()
+                .any(|record| record.kind() == "string"),
+            "{:?}",
+            node.extensions()
+        );
+        assert!(
+            node.extensions()
+                .iter()
+                .any(|record| record.kind() == "array"),
+            "{:?}",
+            node.extensions()
+        );
+        assert!(
+            projection
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code() == ProjectionCode::MalformedReference),
+            "{:?}",
+            projection.diagnostics()
+        );
+    }
+
+    /// A QUDT-schema-compacted unit *target* (`qudt:KiloGM`) is not a
+    /// QUDT vocab IRI and is not an S231 fallback: it classifies as
+    /// `Other`. Empty-local spellings and undeclared prefixes also stay
+    /// `Other`.
+    #[test]
+    fn c018_schema_prefixed_and_degenerate_targets_stay_other() {
+        let projection = project_str(
+            r#"{
+              "@context": {
+                "S231": "http://data.ashrae.org/S231#",
+                "qudt": "http://qudt.org/schema/qudt#",
+                "unit": "http://qudt.org/vocab/unit#"
+              },
+              "@graph": [
+                {
+                  "@id": "ex:t2",
+                  "@type": "S231:Parameter",
+                  "qudt:hasUnit": [
+                    { "@id": "qudt:KiloGM" },
+                    { "@id": "unit:" },
+                    { "@id": "vendor:degAPI" }
+                  ]
+                }
+              ]
+            }"#,
+        );
+        let node = &projection.nodes()[0];
+        let classes: Vec<UnitTargetClass> = node
+            .properties()
+            .iter()
+            .filter_map(|property| match property.payload() {
+                PropertyPayload::Unit(reference) => Some(reference.target_class()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            classes,
+            &[
+                UnitTargetClass::Other,
+                UnitTargetClass::Other,
+                UnitTargetClass::Other
+            ]
+        );
+    }
+
+    /// C-017: emitter attribute members index verbatim; the xsd:decimal
+    /// nominal typed literal stays whole (value text and type spelling).
+    #[test]
+    fn c017_attributes_index_verbatim() {
+        let projection = units_fixture();
+        let kpi = projection
+            .nodes()
+            .iter()
+            .find(|node| node.id_spelling() == Some("ExamplePackage.GainParameters.kP"))
+            .expect("kP node must exist");
+        assert_eq!(text_property(kpi, Term::AccessSpecifier), Some("public"));
+        assert_eq!(
+            text_property(kpi, Term::Description),
+            Some("Proportional gain of the example")
+        );
+        assert_eq!(text_property(kpi, Term::Label), Some("kP"));
+        let nominal = kpi
+            .properties()
+            .iter()
+            .find_map(|property| {
+                if property.term().term() == Term::Nominal
+                    && let PropertyPayload::Value(value) = property.payload()
+                {
+                    return Some(value);
+                }
+                None
+            })
+            .expect("nominal must be an opaque value");
+        match nominal {
+            OpaqueValue::TypedObject {
+                value_text: Some(text),
+                type_spelling: Some(type_spelling),
+                ..
+            } => {
+                assert_eq!(text.as_ref(), "0.5");
+                assert_eq!(
+                    type_spelling.as_ref(),
+                    "http://www.w3.org/2001/XMLSchema#decimal"
+                );
+            }
+            other => panic!("expected typed-object nominal, got {other:?}"),
+        }
+        // `instantiate` is opaque (emitter writes booleans); `fixed` false
+        // still indexes.
+        let flow = projection
+            .nodes()
+            .iter()
+            .find(|node| node.id_spelling() == Some("ExamplePackage.GainParameters.flow"))
+            .expect("flow node must exist");
+        assert!(
+            flow.properties()
+                .iter()
+                .any(|property| property.term().term() == Term::Instantiate)
+        );
+        assert!(kpi.properties().iter().any(|property| matches!(
+            property.payload(),
+            PropertyPayload::Boolean(false)
+        ) && property.term().term() == Term::Fixed));
+    }
+
+    /// Wrong-shaped graphics and unit members retain total extension
+    /// fallback; no silent drops (C-005, C-018).
+    #[test]
+    fn wrong_shapes_stay_extension_evidence() {
+        let projection = project_str(
+            r#"{
+              "@context": { "S231": "http://data.ashrae.org/S231#" },
+              "@graph": [
+                {
+                  "@id": "ex:p1",
+                  "@type": "S231:Parameter",
+                  "S231:graphics": { "S231:coordinateSystem": [0, 0] },
+                  "S231:hasUnit": "Pa",
+                  "qudt:hasUnit": { "@id": "unit:PA" },
+                  "S231:fixed": "yes"
+                }
+              ]
+            }"#,
+        );
+        let node = &projection.nodes()[0];
+        // Four wrong-shape members, each retained verbatim as extension
+        // evidence: graphics as an object, hasUnit as a bare string, the
+        // compacted qudt:hasUnit (not registered — the context never maps
+        // `qudt`), and `fixed` as a string.
+        assert_eq!(node.extensions().len(), 4, "{:?}", node.extensions());
+        let predicates: Vec<&str> = node
+            .extensions()
+            .iter()
+            .map(|record| record.predicate())
+            .collect();
+        assert!(predicates.contains(&"S231:graphics"));
+        assert!(predicates.contains(&"S231:hasUnit"));
+        assert!(predicates.contains(&"qudt:hasUnit"));
+        assert!(predicates.contains(&"S231:fixed"));
+    }
+
+    /// Index evidence from the pinned ExtensionBlock reference: FMU path as
+    /// text, graphics strings verbatim (including unbalanced parens), the
+    /// C-006 garbage guard, and metadata strings (C-017). Dual Extension +
+    /// library type merges to the registered Extension class.
+    #[test]
+    fn annotation_surface_from_pinned_evidence() {
+        let bytes = include_bytes!("../tests/projection/cxf-proj-annotation.jsonld");
+        let preflight = crate::json::admit_and_preflight(bytes, &ParseOptions::new())
+            .expect("annotation fixture must pass preflight");
+        let (document, _) = preflight.into_ordered_document();
+        let projection = project(document);
+
+        let gain = projection
+            .nodes()
+            .iter()
+            .find(|node| node.id_spelling() == Some("ex:ExamplePackage.ExternalLoop.externalGain"))
+            .expect("customGain node must exist");
+        assert_eq!(gain.class(), NodeClass::Block(BlockKind::Extension));
+        assert!(
+            gain.type_spellings()
+                .iter()
+                .any(|spelling| &**spelling == "ex:Vendor.CustomGain")
+        );
+        assert_eq!(
+            text_property(gain, Term::HasFmuPath),
+            Some("vendor/externalLoop/gain.fmu")
+        );
+        assert_eq!(
+            text_property(gain, Term::Graphics),
+            Some("Placement(transformation(extent={{100,90},{140,130}})))")
+        );
+        assert_eq!(text_property(gain, Term::ControlledDevice), Some("Heater"));
+        assert!(gain.properties().iter().any(|property| matches!(
+            property.payload(),
+            PropertyPayload::Boolean(true)
+        ) && property.term().term()
+            == Term::GeneratePointlist));
+
+        let input = projection
+            .nodes()
+            .iter()
+            .find(|node| node.id_spelling().is_some_and(|id| id.ends_with(".u")))
+            .expect("u node must exist");
+        assert_eq!(
+            text_property(input, Term::ConditionalExpression),
+            Some("not undefined")
+        );
+        assert!(
+            input
+                .properties()
+                .iter()
+                .any(|property| property.term().term() == Term::DefaultValue)
         );
     }
 }
