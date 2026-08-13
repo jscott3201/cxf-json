@@ -8,12 +8,15 @@
 //! absence surfaces at `DiagnosticSeverity::Warning` and is never a
 //! rejection. Findings order totally by token, node index, then rule-code
 //! ordinal; the validated document is never discarded. All behavior remains
-//! crate-private; profile 0.1.6 public exports are unchanged.
+//! crate-private; profile 0.1.7 public exports are unchanged.
 
 use std::ops::Range;
 
+use std::collections::BTreeMap;
+
 use crate::contract::DiagnosticSeverity;
-use crate::projection::{DataTypeKind, EdgeKind, NodeClass, Projection};
+use crate::projection::NamespaceClass;
+use crate::projection::{DataTypeKind, EdgeKind, NamespaceObservation, NodeClass, Projection};
 
 /// Stable private code allocation for validator rules.
 ///
@@ -37,6 +40,19 @@ pub(crate) enum ValidationCode {
     GroupingOutsideBlock,
     /// A parameter or constant has no `value` property (C-009).
     ParameterValueAbsent,
+    // W-015-C1 namespace acceptance policy (matrix rows, not structural
+    // rules): the document declares and uses these regions without
+    // rejection; the findings make classification visible.
+    /// The document binds the legacy HTTPS S231P namespace (C-002).
+    LegacyNamespaceGeneration,
+    /// The document binds an unregistered namespace within a known
+    /// vocabulary family (`data.ashrae.org`, `qudt.org` hosts): a
+    /// possible new generation variant the profile does not register.
+    UnregisteredFamilyNamespace,
+    /// A registered prefix (`S231`/`S231P`/`qudt`/`unit`/`q`) is bound to
+    /// a namespace outside its expected set: the binding cannot serve its
+    /// obvious purpose and compacted spellings already fail registration.
+    ShadowedPrefix,
 }
 
 impl ValidationCode {
@@ -47,16 +63,22 @@ impl ValidationCode {
             Self::DataTypeOutsideDomain => "CXF-V-003",
             Self::GroupingOutsideBlock => "CXF-V-004",
             Self::ParameterValueAbsent => "CXF-V-005",
+            Self::LegacyNamespaceGeneration => "CXF-C-001",
+            Self::UnregisteredFamilyNamespace => "CXF-C-002",
+            Self::ShadowedPrefix => "CXF-C-003",
         }
     }
 }
 
 /// One validator finding with source-token evidence and authored ordering.
+///
+/// `node` is `None` for root-level policy findings (namespace observations
+/// live in `@context`, which no graph node owns).
 #[derive(Debug)]
 pub(crate) struct ValidationFinding {
     code: ValidationCode,
     severity: DiagnosticSeverity,
-    node: usize,
+    node: Option<usize>,
     token: Range<usize>,
 }
 
@@ -69,7 +91,7 @@ impl ValidationFinding {
         self.severity
     }
 
-    pub(crate) const fn node(&self) -> usize {
+    pub(crate) const fn node(&self) -> Option<usize> {
         self.node
     }
 
@@ -150,6 +172,9 @@ const fn code_order(code: ValidationCode) -> u8 {
         ValidationCode::DataTypeOutsideDomain => 2,
         ValidationCode::GroupingOutsideBlock => 3,
         ValidationCode::ParameterValueAbsent => 4,
+        ValidationCode::LegacyNamespaceGeneration => 5,
+        ValidationCode::UnregisteredFamilyNamespace => 6,
+        ValidationCode::ShadowedPrefix => 7,
     }
 }
 
@@ -170,7 +195,7 @@ pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
                             findings.push(ValidationFinding {
                                 code: ValidationCode::ConnectionEndpointNotConnector,
                                 severity: DiagnosticSeverity::Error,
-                                node: endpoint,
+                                node: Some(endpoint),
                                 token: edge.token().clone(),
                             });
                         }
@@ -189,7 +214,7 @@ pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
                             findings.push(ValidationFinding {
                                 code: ValidationCode::ConnectionDataTypeMismatch,
                                 severity: DiagnosticSeverity::Error,
-                                node: edge.subject(),
+                                node: Some(edge.subject()),
                                 token: edge.token().clone(),
                             });
                         }
@@ -202,7 +227,7 @@ pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
                     findings.push(ValidationFinding {
                         code: ValidationCode::DataTypeOutsideDomain,
                         severity: DiagnosticSeverity::Error,
-                        node: subject,
+                        node: Some(subject),
                         token: edge.token().clone(),
                     });
                 }
@@ -213,7 +238,7 @@ pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
                     findings.push(ValidationFinding {
                         code: ValidationCode::GroupingOutsideBlock,
                         severity: DiagnosticSeverity::Error,
-                        node: subject,
+                        node: Some(subject),
                         token: edge.token().clone(),
                     });
                 }
@@ -230,8 +255,30 @@ pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
             findings.push(ValidationFinding {
                 code: ValidationCode::ParameterValueAbsent,
                 severity: DiagnosticSeverity::Warning,
-                node: index,
+                node: Some(index),
                 token: node.token().clone(),
+            });
+        }
+    }
+    // W-015 acceptance-policy findings over retained root context
+    // mappings: one finding per RETAINED binding (last-write-wins, the
+    // activation semantics); nothing is rejected.
+    let mut retained: BTreeMap<&str, &NamespaceObservation> = BTreeMap::new();
+    for observation in projection.namespace_observations() {
+        retained.insert(observation.prefix(), observation);
+    }
+    for observation in retained.values() {
+        if let Some(code) =
+            policy_finding(observation.prefix(), observation.iri(), observation.class())
+        {
+            findings.push(ValidationFinding {
+                code,
+                severity: match code {
+                    ValidationCode::ShadowedPrefix => DiagnosticSeverity::Error,
+                    _ => DiagnosticSeverity::Warning,
+                },
+                node: None,
+                token: observation.token().clone(),
             });
         }
     }
@@ -245,6 +292,55 @@ pub(crate) fn validate(projection: &Projection) -> Vec<ValidationFinding> {
             .then(code_order(left.code).cmp(&code_order(right.code)))
     });
     findings
+}
+
+/// Prefix→expected-identity-set mapping for shadow detection. Prefixes are
+/// document-local; these five are registered conventions the emitter and
+/// ecosystem rely on, so binding them to a foreign namespace is the one
+/// shape the policy diagnoses as Error.
+fn prefix_shadowed(prefix: &str, class: NamespaceClass) -> bool {
+    let expected = match prefix {
+        "S231" => [
+            NamespaceClass::S231,
+            NamespaceClass::S231P,
+            NamespaceClass::S231PLegacyHttps,
+        ]
+        .as_slice(),
+        "S231P" => [NamespaceClass::S231P, NamespaceClass::S231PLegacyHttps].as_slice(),
+        "qudt" => [NamespaceClass::QudtSchema].as_slice(),
+        "unit" => [NamespaceClass::QudtUnitVocab].as_slice(),
+        "q" => [NamespaceClass::QudtQuantityKindVocab].as_slice(),
+        _ => return false,
+    };
+    !expected.contains(&class)
+}
+
+/// Known vocabulary-family hosts; unregistered IRIs under these are the
+/// consumer-relevant signal (a possible new generation variant).
+const KNOWN_FAMILY_HOSTS: [&str; 4] = [
+    "http://data.ashrae.org/",
+    "https://data.ashrae.org/",
+    "http://qudt.org/",
+    "https://qudt.org/",
+];
+
+fn known_family(iri: &str) -> bool {
+    KNOWN_FAMILY_HOSTS.iter().any(|host| iri.starts_with(host))
+}
+
+/// W-015 acceptance matrix, row by row. The binding is never rejected;
+/// findings classify it.
+fn policy_finding(prefix: &str, iri: &str, class: NamespaceClass) -> Option<ValidationCode> {
+    if prefix_shadowed(prefix, class) {
+        return Some(ValidationCode::ShadowedPrefix);
+    }
+    match class {
+        NamespaceClass::S231PLegacyHttps => Some(ValidationCode::LegacyNamespaceGeneration),
+        NamespaceClass::Unregistered if known_family(iri) => {
+            Some(ValidationCode::UnregisteredFamilyNamespace)
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -456,6 +552,104 @@ mod tests {
                 .collect();
             assert!(errors.is_empty(), "{name}: {errors:?}");
         }
+    }
+
+    // ---- W-015-C1 acceptance-matrix rows ----
+
+    #[test]
+    fn accepted_generations_produce_no_policy_findings() {
+        let (_, findings) = validate_str(
+            r#"{
+              "@context": {
+                "S231": "http://data.ashrae.org/S231P#",
+                "S231P": "https://data.ashrae.org/S231P#",
+                "qudt": "http://qudt.org/schema/qudt#",
+                "unit": "http://qudt.org/vocab/unit#",
+                "q": "http://qudt.org/vocab/quantitykind#",
+                "ex": "http://example.org#"
+              }
+            }"#,
+        );
+        // C-016: `S231` legitimately maps to the post-v1.2 namespace. The
+        // legacy HTTPS binding diagnoses as Observation; `ex` (a data
+        // namespace outside the known families) produces nothing.
+        assert_eq!(
+            codes(&findings),
+            &[ValidationCode::LegacyNamespaceGeneration]
+        );
+        assert_eq!(findings[0].severity(), DiagnosticSeverity::Warning);
+        assert_eq!(findings[0].node(), None);
+    }
+
+    #[test]
+    fn shadowed_prefix_is_an_error() {
+        let (_, findings) = validate_str(
+            r#"{
+              "@context": {
+                "S231": "http://qudt.org/schema/qudt#",
+                "ex": "http://example.org#"
+              },
+              "@graph": [
+                { "@id": "ex:a", "@type": "S231:Parameter", "S231:value": 1 }
+              ]
+            }"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.code() == ValidationCode::ShadowedPrefix
+                    && finding.severity() == DiagnosticSeverity::Error),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn unregistered_family_variant_is_a_warning() {
+        let (_, findings) = validate_str(
+            r#"{
+              "@context": {
+                "S231": "http://data.ashrae.org/S231#",
+                "v2": "http://data.ashrae.org/S231R#",
+                "ex": "http://example.org#"
+              }
+            }"#,
+        );
+        assert_eq!(
+            codes(&findings),
+            &[ValidationCode::UnregisteredFamilyNamespace]
+        );
+        assert_eq!(findings[0].severity(), DiagnosticSeverity::Warning);
+    }
+
+    #[test]
+    fn duplicate_prefix_bindings_fail_at_admission() {
+        // Duplicate object members never reach the validator: W-011
+        // preflight rejects them, which is exactly why the policy rules
+        // only ever see a single binding per prefix.
+        let result = crate::json::admit_and_preflight(
+            br#"{
+              "@context": {
+                "S231": "http://data.ashrae.org/S231#",
+                "S231": "http://qudt.org/schema/qudt#"
+              }
+            }"#,
+            &ParseOptions::new(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn non_family_foreign_namespaces_stay_silent() {
+        let (_, findings) = validate_str(
+            r#"{
+              "@context": {
+                "S231": "http://data.ashrae.org/S231#",
+                "vocab": "https://vocab.example.org/points#",
+                "ex": "http://example.org#"
+              }
+            }"#,
+        );
+        assert_eq!(codes(&findings).len(), 0, "{findings:?}");
     }
 
     #[test]

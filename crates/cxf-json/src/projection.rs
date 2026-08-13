@@ -28,7 +28,7 @@
 //! silently dropped. `@included` members collect nodes like `@graph`;
 //! node-scoped `@context` members leave evidence but are never applied —
 //! compacted registration follows the root context only. All behavior here
-//! remains crate-private; profile 0.1.6 public exports are unchanged.
+//! remains crate-private; profile 0.1.7 public exports are unchanged.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -339,6 +339,77 @@ struct ActiveContext {
     /// context bindings of the same prefix, both maps keep last-write-wins
     /// order semantics independently.
     unit_prefixes: BTreeMap<Arc<str>, UnitNamespace>,
+    /// One record per declared context mapping, in authored order; the
+    /// acceptance-policy rules (W-015) consume these verbatim.
+    observations: Vec<NamespaceObservation>,
+}
+
+/// Acceptance-matrix classification of one declared context-namespace
+/// mapping (W-015). Identity stays distinct per registered IRI; nothing is
+/// merged, normalized, or made globally equivalent (C-002/C-016).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NamespaceClass {
+    /// `http://data.ashrae.org/S231#`
+    S231,
+    /// `http://data.ashrae.org/S231P#`
+    S231P,
+    /// `https://data.ashrae.org/S231P#` (legacy pre-#301 spelling; C-002).
+    S231PLegacyHttps,
+    /// `http://qudt.org/schema/qudt#`
+    QudtSchema,
+    /// `http://qudt.org/vocab/unit#`
+    QudtUnitVocab,
+    /// `http://qudt.org/vocab/quantitykind#`
+    QudtQuantityKindVocab,
+    /// Anything else, including unregistered variants of the known
+    /// vocabulary families (the consumer-facing signal).
+    Unregistered,
+}
+
+impl NamespaceClass {
+    fn from_iri(iri: &str) -> Self {
+        if let Some(vocabulary) = vocabulary_for_namespace(iri) {
+            return match vocabulary {
+                Vocabulary::S231 => Self::S231,
+                Vocabulary::S231P => Self::S231P,
+                Vocabulary::S231PLegacyHttps => Self::S231PLegacyHttps,
+                Vocabulary::QudtSchema => Self::QudtSchema,
+            };
+        }
+        match UnitNamespace::for_iri(iri) {
+            Some(UnitNamespace::Unit) => Self::QudtUnitVocab,
+            Some(UnitNamespace::QuantityKind) => Self::QudtQuantityKindVocab,
+            None => Self::Unregistered,
+        }
+    }
+}
+
+/// One declared `@context` prefix mapping, retained verbatim for the
+/// W-015 acceptance-policy rules.
+#[derive(Debug)]
+pub(crate) struct NamespaceObservation {
+    prefix: Arc<str>,
+    iri: Arc<str>,
+    class: NamespaceClass,
+    token: Range<usize>,
+}
+
+impl NamespaceObservation {
+    pub(crate) fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    pub(crate) fn iri(&self) -> &str {
+        &self.iri
+    }
+
+    pub(crate) const fn class(&self) -> NamespaceClass {
+        self.class
+    }
+
+    pub(crate) const fn token(&self) -> &Range<usize> {
+        &self.token
+    }
 }
 
 fn activate_context(members: &[OrderedMember]) -> ActiveContext {
@@ -356,7 +427,8 @@ fn activate_context_value(value: &OrderedValue, active: &mut ActiveContext) {
         OrderedValue::Object { members, .. } => {
             for member in members {
                 if let OrderedValue::String {
-                    value: namespace, ..
+                    value: namespace,
+                    token,
                 } = &member.value
                 {
                     if let Some(vocabulary) = vocabulary_for_namespace(namespace) {
@@ -365,6 +437,12 @@ fn activate_context_value(value: &OrderedValue, active: &mut ActiveContext) {
                     if let Some(bucket) = UnitNamespace::for_iri(namespace) {
                         active.unit_prefixes.insert(member.name.clone(), bucket);
                     }
+                    active.observations.push(NamespaceObservation {
+                        prefix: member.name.clone(),
+                        iri: namespace.clone(),
+                        class: NamespaceClass::from_iri(namespace),
+                        token: token.clone(),
+                    });
                 }
             }
         }
@@ -1136,6 +1214,7 @@ pub(crate) struct Projection {
     edges: Vec<ProjectionEdge>,
     diagnostics: Vec<ProjectionDiagnostic>,
     root_extensions: Vec<ExtensionRecord>,
+    namespace_observations: Vec<NamespaceObservation>,
     metrics: ProjectionMetrics,
     source_document: Option<crate::SourceDocument>,
 }
@@ -1155,6 +1234,13 @@ impl Projection {
 
     pub(crate) fn root_extensions(&self) -> &[ExtensionRecord] {
         &self.root_extensions
+    }
+
+    /// Every declared root `@context` prefix mapping, verbatim, in authored
+    /// order. The W-015 acceptance-policy rules consume these; the
+    /// projection itself draws no accept/reject conclusions.
+    pub(crate) fn namespace_observations(&self) -> &[NamespaceObservation] {
+        &self.namespace_observations
     }
 
     pub(crate) const fn metrics(&self) -> ProjectionMetrics {
@@ -1285,6 +1371,7 @@ impl ProjectionBuilder<'_> {
             edges: self.edges,
             diagnostics: self.diagnostics,
             root_extensions: self.root_extensions,
+            namespace_observations: self.context.observations,
             metrics,
             source_document: None,
         }
