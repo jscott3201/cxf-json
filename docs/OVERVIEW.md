@@ -33,6 +33,7 @@ validation, and language bindings — are not exposed yet.
 | Typed CXF projection | Private crate stage | Classified nodes, edges, and opaque values since profile 0.1.4 |
 | Public CXF parse API | Not built | No supported parse entry point |
 | Conformance validation | Private validator core | Stable private `CXF-V-*` rule codes since profile 0.1.6; no public validation surface |
+| Namespace acceptance policy | Private findings | Normative matrix with `CXF-C-*` warning findings since profile 0.1.7; nothing rejected beyond preflight |
 | Untrusted-input safety | Not built | Backend memory, time, diagnostics, and host policy remain open |
 
 ## What the probe demonstrates

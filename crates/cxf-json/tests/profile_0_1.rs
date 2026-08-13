@@ -202,7 +202,7 @@ fn crate_tracks_the_documented_profile_version() {
     ))
     .expect("spec/PROFILE.md must be readable from the crate tests");
     assert!(
-        profile.contains("Profile version: 0.1.6"),
+        profile.contains("Profile version: 0.1.7"),
         "profile version pin is stale"
     );
 }
