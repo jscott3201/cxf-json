@@ -13,7 +13,8 @@ The repository is moving toward one shared sequence:
 2. parse and diagnose JSON in bounded project stages;
 3. process private JSON-LD/RDF under project output limits;
 4. project supported CXF terms into owned typed values plus diagnostics;
-5. expose equivalent typed results through Rust and later language adapters.
+5. validate the projection without discarding it; and
+6. expose equivalent typed results through Rust and later language adapters.
 
 Only the contract foundations for this shape exist today. The later product
 stages that matter to users — supported parsing, typed CXF values, conformance
@@ -34,6 +35,7 @@ validation, and language bindings — are not exposed yet.
 | Public CXF parse API | Not built | No supported parse entry point |
 | Conformance validation | Private validator core | Stable private `CXF-V-*` rule codes since profile 0.1.6; no public validation surface |
 | Namespace acceptance policy | Private findings | Normative matrix with `CXF-C-*` warning findings since profile 0.1.7; nothing rejected beyond preflight |
+| Composed private stages | Private crate operation | Retains RDF evidence beside source-derived projection and validation findings without claiming a source/RDF identity join |
 | Untrusted-input safety | Not built | Backend memory, time, diagnostics, and host policy remain open |
 
 ## What the probe demonstrates

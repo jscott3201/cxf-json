@@ -3,7 +3,12 @@ use std::fmt;
 use oxjsonld::JsonLdParser;
 use oxrdf::{GraphName, NamedOrBlankNode, Quad, Term};
 
-use crate::{ParseOptions, SourceDocument, json, ordered::OrderedDocument};
+use crate::{
+    ParseOptions, SourceDocument, json,
+    ordered::OrderedDocument,
+    projection::{self, Projection},
+    validation::{self, ValidationFinding},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SemanticMetrics {
@@ -42,9 +47,58 @@ impl SemanticDocument {
         self.metrics
     }
 
+    fn into_parts(self) -> (OrderedDocument, Vec<Quad>, SemanticMetrics) {
+        (self.ordered, self.quads, self.metrics)
+    }
+
     #[cfg(test)]
     pub(crate) const fn ordered_root(&self) -> &crate::ordered::OrderedValue {
         self.ordered.root()
+    }
+}
+
+/// Private composition of independently retained semantic and source-derived
+/// evidence. No field claims correspondence between an RDF quad and a
+/// projection node (D-030).
+pub(crate) struct ComposedDocument {
+    projection: Projection,
+    quads: Vec<Quad>,
+    semantic_metrics: SemanticMetrics,
+    validation_findings: Vec<ValidationFinding>,
+}
+
+impl fmt::Debug for ComposedDocument {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ComposedDocument")
+            .field("source", self.source_document())
+            .field("quad_count", &self.quads.len())
+            .field("semantic_metrics", &self.semantic_metrics)
+            .field("projection_metrics", &self.projection.metrics())
+            .field("validation_finding_count", &self.validation_findings.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ComposedDocument {
+    pub(crate) fn source_document(&self) -> &SourceDocument {
+        self.projection.source_document()
+    }
+
+    pub(crate) fn projection(&self) -> &Projection {
+        &self.projection
+    }
+
+    pub(crate) fn quads(&self) -> &[Quad] {
+        &self.quads
+    }
+
+    pub(crate) const fn semantic_metrics(&self) -> SemanticMetrics {
+        self.semantic_metrics
+    }
+
+    pub(crate) fn validation_findings(&self) -> &[ValidationFinding] {
+        &self.validation_findings
     }
 }
 
@@ -107,6 +161,24 @@ pub(crate) fn ingest(
     let preflight =
         json::admit_and_preflight(input, options).map_err(SemanticFailure::Preflight)?;
     ingest_preflighted(preflight, options).map_err(SemanticFailure::Semantic)
+}
+
+/// Runs the existing private ingestion, source projection, and validation
+/// stages without adding source-to-RDF correspondence or a public parse path.
+pub(crate) fn ingest_project_validate(
+    input: &[u8],
+    options: &ParseOptions,
+) -> Result<ComposedDocument, SemanticFailure> {
+    let semantic = ingest(input, options)?;
+    let (ordered, quads, semantic_metrics) = semantic.into_parts();
+    let projection = projection::project(ordered);
+    let validation_findings = validation::validate(&projection);
+    Ok(ComposedDocument {
+        projection,
+        quads,
+        semantic_metrics,
+        validation_findings,
+    })
 }
 
 pub(crate) fn ingest_preflighted(
@@ -282,6 +354,8 @@ mod tests {
     const EMBEDDED_CONTEXT: &[u8] = include_bytes!("../tests/fixtures/embedded-context.jsonld");
     const NAMED_GRAPH: &[u8] = include_bytes!("../tests/fixtures/named-graph.jsonld");
     const REMOTE_CONTEXT: &[u8] = include_bytes!("../tests/fixtures/remote-context.jsonld");
+    const COMPOSITION_BOUNDARY: &[u8] =
+        include_bytes!("../tests/projection/cxf-proj-composition.jsonld");
     const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
     const S231_BLOCK: &str = "http://data.ashrae.org/S231P#Block";
 
@@ -296,6 +370,108 @@ mod tests {
             SemanticFailure::Semantic(error) => error,
             SemanticFailure::Preflight(_) => panic!("expected semantic failure"),
         }
+    }
+
+    fn composition_error(input: &[u8], options: &ParseOptions) -> SemanticFailure {
+        ingest_project_validate(input, options).expect_err("private composition should fail")
+    }
+
+    #[test]
+    fn composition_retains_independent_rdf_projection_and_validation_evidence() {
+        let document = ingest_project_validate(COMPOSITION_BOUNDARY, &options())
+            .expect("owned composition fixture should construct");
+
+        assert_eq!(document.source_document().as_bytes(), COMPOSITION_BOUNDARY);
+        assert_eq!(document.quads().len(), 2);
+        assert_eq!(document.semantic_metrics().emitted_rdf_quads, 2);
+        assert!(document.quads().iter().all(|quad| {
+            matches!(
+                &quad.subject,
+                NamedOrBlankNode::NamedNode(node)
+                    if node.as_str() == "https://example.test/relative-parameter"
+            )
+        }));
+
+        let projection = document.projection();
+        assert!(projection.diagnostics().is_empty());
+        assert_eq!(projection.nodes().len(), 1);
+        assert_eq!(
+            projection.nodes()[0].id_spelling(),
+            Some("relative-parameter")
+        );
+        assert_eq!(projection.nodes()[0].extensions().len(), 1);
+        assert_eq!(projection.nodes()[0].extensions()[0].kind(), "string");
+        assert_eq!(projection.metrics().extension_members, 1);
+
+        assert_eq!(document.validation_findings().len(), 1);
+        assert_eq!(
+            document.validation_findings()[0].code().as_str(),
+            "CXF-V-005"
+        );
+    }
+
+    #[test]
+    fn projection_and_validation_findings_do_not_fail_composition() {
+        let input = br#"{
+            "@context": {"S231": "http://data.ashrae.org/S231#"},
+            "@graph": [
+                {"@id": "weak"},
+                {"@id": "parameter", "@type": "S231:Parameter"}
+            ]
+        }"#;
+        let document = ingest_project_validate(input, &options())
+            .expect("projection and validation findings should be non-fatal");
+
+        assert_eq!(document.projection().diagnostics().len(), 1);
+        assert_eq!(document.validation_findings().len(), 1);
+        assert_eq!(
+            document.validation_findings()[0].code().as_str(),
+            "CXF-V-005"
+        );
+    }
+
+    #[test]
+    fn composition_preserves_construction_failure_precedence() {
+        let baseline = ingest_project_validate(COMPOSITION_BOUNDARY, &options())
+            .expect("owned composition fixture should establish its RDF byte budget");
+        let retained_rdf_term_bytes = baseline.semantic_metrics().retained_rdf_term_bytes;
+
+        assert!(matches!(
+            composition_error(b"{}", &ParseOptions::new().with_max_input_bytes(1)),
+            SemanticFailure::Preflight(PreflightFailure::Admission(_))
+        ));
+        assert!(matches!(
+            composition_error(b"{", &options()),
+            SemanticFailure::Preflight(PreflightFailure::Json(error))
+                if error.kind() == crate::json::JsonFailureKind::Syntax
+        ));
+        assert!(matches!(
+            composition_error(b"{", &ParseOptions::new()),
+            SemanticFailure::Preflight(PreflightFailure::Json(error))
+                if error.kind() == crate::json::JsonFailureKind::Syntax
+        ));
+        assert!(matches!(
+            composition_error(b"{}", &ParseOptions::new()),
+            SemanticFailure::Semantic(error)
+                if error.kind() == SemanticFailureKind::MissingDocumentIri
+        ));
+        assert!(matches!(
+            composition_error(REMOTE_CONTEXT, &options()),
+            SemanticFailure::Semantic(error) if error.kind() == SemanticFailureKind::JsonLd
+        ));
+        assert!(matches!(
+            composition_error(COMPOSITION_BOUNDARY, &options().with_max_rdf_quads(0)),
+            SemanticFailure::Semantic(error)
+                if error.kind() == SemanticFailureKind::RdfQuadLimit
+        ));
+        assert!(matches!(
+            composition_error(
+                COMPOSITION_BOUNDARY,
+                &options().with_max_retained_rdf_term_bytes(retained_rdf_term_bytes - 1)
+            ),
+            SemanticFailure::Semantic(error)
+                if error.kind() == SemanticFailureKind::RetainedRdfTermBytesLimit
+        ));
     }
 
     #[test]
