@@ -159,7 +159,10 @@ def read_regular_file(path, trusted_root, max_bytes):
         if metadata.st_size > max_bytes:
             fail(f"file exceeds {max_bytes} bytes: {path}")
         with os.fdopen(descriptor, "rb", closefd=False) as file:
-            return file.read()
+            data = file.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            fail(f"file exceeds {max_bytes} bytes: {path}")
+        return data
     except OSError as error:
         fail(f"cannot open regular file without following symlinks: {path}: {error}")
     finally:
