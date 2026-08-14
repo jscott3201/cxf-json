@@ -128,6 +128,103 @@ mod enabled {
         stage: String,
     }
 
+    #[cfg(target_os = "macos")]
+    struct ProcessExitWatcher {
+        queue: libc::c_int,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl ProcessExitWatcher {
+        fn register(pid: u32) -> io::Result<Self> {
+            let queue = unsafe { libc::kqueue() };
+            if queue == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            let watcher = Self { queue };
+            let change = libc::kevent {
+                ident: pid as libc::uintptr_t,
+                filter: libc::EVFILT_PROC,
+                flags: libc::EV_ADD | libc::EV_ONESHOT | libc::EV_RECEIPT,
+                fflags: libc::NOTE_EXIT,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            };
+            let mut receipt = libc::kevent {
+                ident: 0,
+                filter: 0,
+                flags: 0,
+                fflags: 0,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            };
+            let timeout = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            let received = unsafe {
+                libc::kevent(
+                    queue,
+                    &raw const change,
+                    1,
+                    &raw mut receipt,
+                    1,
+                    &raw const timeout,
+                )
+            };
+            if received != 1 || receipt.flags & libc::EV_ERROR == 0 || receipt.data != 0 {
+                return Err(if received == -1 {
+                    io::Error::last_os_error()
+                } else {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "macOS process-exit watch registration failed",
+                    )
+                });
+            }
+            Ok(watcher)
+        }
+
+        fn wait(self) -> io::Result<bool> {
+            let mut event = libc::kevent {
+                ident: 0,
+                filter: 0,
+                flags: 0,
+                fflags: 0,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            };
+            let timeout = libc::timespec {
+                tv_sec: (DEADLINE + Duration::from_secs(1)).as_secs() as libc::time_t,
+                tv_nsec: 0,
+            };
+            let received = unsafe {
+                libc::kevent(
+                    self.queue,
+                    std::ptr::null(),
+                    0,
+                    &raw mut event,
+                    1,
+                    &raw const timeout,
+                )
+            };
+            if received == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(received == 1
+                && event.filter == libc::EVFILT_PROC
+                && event.fflags & libc::NOTE_EXIT != 0)
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for ProcessExitWatcher {
+        fn drop(&mut self) {
+            unsafe {
+                libc::close(self.queue);
+            }
+        }
+    }
+
     #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
     #[serde(deny_unknown_fields)]
     struct WorkerMetrics {
@@ -599,6 +696,14 @@ mod enabled {
             ));
         }
 
+        let exit_watcher = ProcessExitWatcher::register(ready.worker_pid).map_err(|error| {
+            stop_child(&mut controller);
+            format!(
+                "parent-liveness {} worker exit watch failed: {error}",
+                stage.name()
+            )
+        })?;
+
         let (kill_sent, reaped) = terminate_child(&mut controller);
         if !kill_sent || !reaped {
             unsafe {
@@ -609,7 +714,16 @@ mod enabled {
                 stage.name()
             ));
         }
-        if !wait_for_process_exit(ready.worker_pid) {
+        let worker_exited = exit_watcher.wait().map_err(|error| {
+            unsafe {
+                libc::kill(ready.worker_pid as libc::pid_t, libc::SIGKILL);
+            }
+            format!(
+                "parent-liveness {} worker exit wait failed: {error}",
+                stage.name()
+            )
+        })?;
+        if !worker_exited {
             unsafe {
                 libc::kill(ready.worker_pid as libc::pid_t, libc::SIGKILL);
             }
@@ -715,19 +829,6 @@ mod enabled {
             io::ErrorKind::InvalidData,
             "parent-liveness response exceeded its limit or lacked a newline",
         ))
-    }
-
-    #[cfg(target_os = "macos")]
-    fn wait_for_process_exit(pid: u32) -> bool {
-        let started = Instant::now();
-        while started.elapsed() < DEADLINE + Duration::from_secs(1) {
-            let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-            if result == -1 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
-                return true;
-            }
-            thread::sleep(POLL_INTERVAL);
-        }
-        false
     }
 
     fn worker_main(mode: WorkerMode) -> ExitCode {
@@ -1234,7 +1335,7 @@ mod enabled {
 
     const fn parent_liveness_mechanism() -> &'static str {
         if cfg!(target_os = "macos") {
-            "framed_stdin_eof"
+            "framed_stdin_eof_with_kqueue_exit_observation"
         } else {
             "not_evaluated"
         }

@@ -278,8 +278,9 @@ diagnostic text.
 The macOS report also kills an intermediate controller during worker startup,
 execution, and response handling. The framed stdin pipe closes with the controller;
 startup reads fail on EOF, while a worker watchdog exits on EOF after request framing.
-The report verifies the worker PID disappears after each controller death. This tests
-one direct worker only. It does not establish descendant containment or a sandbox.
+The report registers `EVFILT_PROC` before killing the controller and observes
+`NOTE_EXIT` for the worker after each controller death. This tests one direct worker
+only. It does not establish descendant containment or a sandbox.
 
 `RLIMIT_AS` bounds virtual address space, not RSS. The constants belong to the
 evidence harness; they are not parser options, package defaults, or release
