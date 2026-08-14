@@ -1135,7 +1135,7 @@ mod enabled {
                 }
                 let output = vec![b'x'; OVERSIZED_RESPONSE_ATTEMPT_BYTES];
                 let mut stdout = io::stdout().lock();
-                let _ = stdout.write_all(&output);
+                while stdout.write_all(&output).is_ok() {}
                 thread::sleep(DEADLINE + Duration::from_secs(10));
                 ExitCode::FAILURE
             }
