@@ -276,13 +276,14 @@ a fixed outcome, source-match boolean, counters, and target memory-policy identi
 They contain no source bytes, RDF values, ordered source tree, or backend diagnostic
 text.
 
-The macOS report also kills an intermediate controller while the worker awaits its
-request header, runs a controlled long operation, and fills a response pipe held by the
-controller. The framed stdin pipe closes with the controller; startup reads fail on
-EOF, while a worker watchdog exits on EOF after request framing. Before registering
-`EVFILT_PROC`, the report verifies the worker PID, parent PID, and process start time;
-it checks that identity again after registration, then observes `NOTE_EXIT` after
-controller death. This tests one direct worker only. It does not establish descendant
+The macOS report retains the worker `Child` while an intermediate controller owns the
+only request-writer and response-reader descriptors. It kills that controller while the
+worker awaits its request header, runs a controlled long operation, and fills the held
+response pipe. Startup reads fail on EOF; after request framing, a watchdog exits with
+status 86 on EOF. Before registering `EVFILT_PROC`, the report verifies the worker PID,
+parent PID, and process start time. It checks that identity again after registration,
+observes `NOTE_EXIT`, requires watchdog status 86, and reaps the worker through the
+retained handle. This tests one direct worker only. It does not establish descendant
 containment or a sandbox.
 
 A clean release run at revision `f9f9d355e2e0538243ba098493a3d1ba2eb46bff`
