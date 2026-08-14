@@ -22,6 +22,12 @@ contract foundations, and label every planned-host behavior explicitly as
 planned. No code in this repository defines a Python package, browser package,
 Node package, PyO3 module, JavaScript API, or public WASM parse entry point.
 
+[`ADR 0014`](../spec/adr/0014-native-worker-qualification.md) defines the qualification
+contract for future Linux, macOS, and Windows worker controllers. It requires
+target-specific memory enforcement, bounded lifecycle and transfer, controller-owned
+source, and no in-process fallback. It does not qualify any target or define a public
+host API, wire encoding, or production resource value.
+
 ## Rust contract
 
 `crates/cxf-json` is the implementation crate. It currently exports:

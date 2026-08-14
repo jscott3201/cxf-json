@@ -89,3 +89,8 @@ remote-context loader.
 
 Open an issue before changing parser/API scope, resource limits, package names,
 binding surfaces, wire formats, compatibility policy, or benchmark claims.
+
+[`ADR 0014`](../spec/adr/0014-native-worker-qualification.md) records the native
+qualification criteria for Linux, macOS, and Windows. No target currently satisfies
+those criteria. The Linux report remains mechanism evidence, and its limits are not
+package defaults.

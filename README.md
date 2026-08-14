@@ -142,6 +142,10 @@ public parser for untrusted input. Existing input and output limits constrain
 contract-owned copies and project output; they do not bound parser-backend
 allocation, process memory, or execution time.
 
+[`ADR 0014`](spec/adr/0014-native-worker-qualification.md) defines how future Linux,
+macOS, and Windows worker implementations must qualify. It does not make the current
+Linux evidence harness or any package surface safe for untrusted input.
+
 If you discover a vulnerability and repository private vulnerability reporting
 is enabled, use GitHub’s private security report flow; otherwise open a
 less-detailed public issue and coordinate disclosure through the repository
