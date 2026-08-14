@@ -8,7 +8,7 @@
 //! absence surfaces at `DiagnosticSeverity::Warning` and is never a
 //! rejection. Findings order totally by token, node index, then rule-code
 //! ordinal; the validated document is never discarded. All behavior remains
-//! crate-private; profile 0.1.7 public exports are unchanged.
+//! crate-private; profile 0.1.8 public exports are unchanged.
 
 use std::ops::Range;
 

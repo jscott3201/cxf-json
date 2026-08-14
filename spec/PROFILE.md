@@ -1,18 +1,19 @@
 # CXF project profile
 
-Profile version: 0.1.7
+Profile version: 0.1.8
 
 Status: Core contract with input, JSON-structure, RDF output options, a
 private typed CXF projection stage, a private validator core, and a private
 namespace acceptance policy; no supported public parser or conformance
 profile.
 
-Compatibility impact: Additive namespace acceptance policy without public
-behavior. ADR 0011 records the machine-readable `Additive` classification.
+Compatibility impact: Clarification of producer-generation evidence without
+behavior change. ADR 0013 records the machine-readable `Clarification`
+classification.
 
 ## Scope
 
-Version 0.1.7 defines the owned Rust foundations, input-byte admission, structural
+Version 0.1.8 defines the owned Rust foundations, input-byte admission, structural
 JSON options, RDF output-retention options, a private typed CXF projection
 stage, a private validator core emitting stable rule codes, and a private
 namespace acceptance matrix classifying declared context mappings. It does not
@@ -32,7 +33,7 @@ The crate exports `SourceDocument`, `AdmissionError`, `DocumentIri`,
 `ParseOptions`.
 
 Public signatures MUST NOT expose Serde, OxIRI, OxJSONLD, OxRDF, filesystem, HTTP,
-Python, JavaScript, or other host-runtime values. Profile 0.1.7 defines no Serde
+Python, JavaScript, or other host-runtime values. Profile 0.1.8 defines no Serde
 serialization contract for public core types.
 
 Normal package and documentation builds export only the types listed above. A
@@ -222,7 +223,7 @@ remains available only in the retained source bytes that the projection owns.
 Projection findings, including weakly typed nodes, conflicting type
 assertions, known broken-emitter value artifacts, malformed references,
 unresolved references, and duplicate node identifiers, use the private
-`CXF-P-000` through `CXF-P-006` codes. Version 0.1.7 keeps these codes private;
+`CXF-P-000` through `CXF-P-006` codes. Version 0.1.8 keeps these codes private;
 W-014 owns any future public stabilization.
 
 ## Private validator core
@@ -248,7 +249,7 @@ node index (absent for root-level policy findings), and the source token of
 the evidenced member, and MUST order deterministically by token start, then
 node index, then rule-code ordinal. Rules that never fire include anything
 whose evidence depends on weakly typed or library-typed nodes. Version
-0.1.7 keeps `CXF-V-*` codes private; W-016 owns negative-corpus coverage,
+0.1.8 keeps `CXF-V-*` codes private; W-016 owns negative-corpus coverage,
 and a later profile decides any public stabilization.
 
 ## Private namespace acceptance policy
@@ -267,7 +268,7 @@ produce observations.
 | Declared mapping | Acceptance | Finding |
 |---|---|---|
 | `http://data.ashrae.org/S231#` | Accepted, registered identity | none |
-| `http://data.ashrae.org/S231P#` | Accepted, registered identity (C-016: the `S231` prefix legitimately maps here in post-v1.2 output) | none |
+| `http://data.ashrae.org/S231P#` | Accepted, registered identity (C-016: the `S231` prefix maps here in transitional producer output) | none |
 | `https://data.ashrae.org/S231P#` | Accepted as observed legacy; identity kept distinct (C-002) | `CXF-C-001` Warning |
 | `http://qudt.org/schema/qudt#` | Accepted for the two unit predicates (ADR 0009) | none |
 | `http://qudt.org/vocab/unit#`, `http://qudt.org/vocab/quantitykind#` | Accepted as target-classification buckets | none |
@@ -282,9 +283,18 @@ shadow-first: a shadowed known-prefix binding emits `CXF-C-003` only.
 All policy findings are warnings because processing continues and the
 document is retained; rejection behavior remains concentrated in W-011
 preflight. `CXF-C-*` codes follow the same ordering, evidence, and
-severity-type rules as `CXF-V-*` and stay private in 0.1.7; full-IRI term
+severity-type rules as `CXF-V-*` and stay private in 0.1.8; full-IRI term
 spellings used without a context binding do not diagnose at the term level
 in this slice.
+
+The producer observations in `spec/producer-observations.json` distinguish
+source facts from project-owned recognition witnesses. Released `modelica-json`
+v1.2.0 and v1.3.0 use HTTPS S231P; reference output regenerated in commit
+`54777488ad08251d24f65d1ab2afc44b773200a5` uses HTTP S231P; and the
+operator-qualified corpus generated at
+`85721b828a6ff8d9d3c1a48ff9a59808d2fa31fb` uses HTTP S231. These observations
+do not make the owned witnesses producer output or establish a compatibility
+pass for any producer release.
 
 Predicate-variance policy, completing the OQ-004 matrix: distinct spec and
 emitter predicate spellings — `connectedTo` versus `isConnectedTo`, both
@@ -298,5 +308,5 @@ alone.
 
 Version 0.1.0 was the first behavior-bearing profile. A breaking pre-1.0 change
 MUST increment the minor version and reset the patch version to zero. Additive
-behavior or a new public contract MUST advance the patch version and follow
-`spec/README.md`.
+behavior, a new public contract, or a clarification MUST advance the patch
+version and follow `spec/README.md`.

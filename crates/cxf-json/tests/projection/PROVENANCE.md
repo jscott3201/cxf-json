@@ -39,6 +39,11 @@ CXF parameter class, and one project-authored extension predicate to prove that
 JSON-LD acceptance, source projection, and validation remain independent
 evidence. No external fixture structure or content was copied or transformed.
 
+W-015 reuses the owned fixtures as recognition witnesses for the source-free
+producer observations in `spec/producer-observations.json`. They are not
+producer output and do not establish a compatibility pass for a producer
+revision. No fixture bytes changed for this use.
+
 SHA-256 checksums recorded at authoring:
 
 - `8a12848e3d58d0412098ebfb135f6ef7fecacda20cf511da8595c10e8282eef8` `cxf-proj-artifact.jsonld`

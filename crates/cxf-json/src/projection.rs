@@ -28,7 +28,7 @@
 //! silently dropped. `@included` members collect nodes like `@graph`;
 //! node-scoped `@context` members leave evidence but are never applied —
 //! compacted registration follows the root context only. All behavior here
-//! remains crate-private; profile 0.1.7 public exports are unchanged.
+//! remains crate-private; profile 0.1.8 public exports are unchanged.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -2471,6 +2471,158 @@ mod tests {
         );
         assert_eq!(spec_edge.predicate().term(), Term::ConnectedTo);
         assert_eq!(emitter_edge.predicate().term(), Term::IsConnectedTo);
+    }
+
+    fn project_owned_witness(path: &str) -> Projection {
+        let path = std::path::Path::new(path);
+        assert!(
+            path.starts_with("crates/cxf-json/tests/projection")
+                || path.starts_with("crates/cxf-json/tests/w016"),
+            "producer observations may reference only owned witness roots"
+        );
+        assert!(
+            path.components()
+                .all(|component| matches!(component, std::path::Component::Normal(_))),
+            "producer observation witness paths must not traverse"
+        );
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("repository root must resolve");
+        let lexical_witness = root.join(path);
+        let witness = lexical_witness
+            .canonicalize()
+            .expect("owned witness must resolve");
+        assert_eq!(
+            witness, lexical_witness,
+            "owned witness path must not contain symlinks"
+        );
+        let metadata = witness
+            .metadata()
+            .expect("owned witness metadata must be readable");
+        assert!(metadata.is_file(), "owned witness must be a regular file");
+        assert!(
+            metadata.len() <= ParseOptions::DEFAULT_MAX_INPUT_BYTES,
+            "owned witness must fit the default input-byte limit"
+        );
+        let bytes = std::fs::read(witness).expect("owned witness must be readable");
+        let preflight = crate::json::admit_and_preflight(&bytes, &ParseOptions::new())
+            .expect("owned witness must pass preflight");
+        let (document, _) = preflight.into_ordered_document();
+        project(document)
+    }
+
+    fn projection_has_term(projection: &Projection, namespace: &str, term: Term) -> bool {
+        projection.edges().iter().any(|edge| {
+            edge.predicate().namespace_iri() == namespace && edge.predicate().term() == term
+        }) || projection.nodes().iter().any(|node| {
+            node.properties().iter().any(|property| {
+                property.term().namespace_iri() == namespace && property.term().term() == term
+            })
+        })
+    }
+
+    fn expected_term(iri: &str) -> Term {
+        match iri.rsplit_once('#').map(|(_, local)| local) {
+            Some("connectedTo") => Term::ConnectedTo,
+            Some("isConnectedTo") => Term::IsConnectedTo,
+            Some("hasUnit") => Term::HasUnit,
+            Some("hasQuantityKind") => Term::HasQuantityKind,
+            other => panic!("unsupported producer-observation term: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn producer_observations_have_owned_recognition_witnesses() {
+        let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../spec/producer-observations.json");
+        let metadata = std::fs::symlink_metadata(&manifest_path)
+            .expect("producer observation manifest metadata must be readable");
+        assert!(
+            metadata.file_type().is_file(),
+            "producer observation manifest must be a regular file"
+        );
+        let manifest_text = std::fs::read_to_string(manifest_path)
+            .expect("producer observation manifest must be readable");
+        let manifest: serde_json::Value = serde_json::from_str(&manifest_text)
+            .expect("producer observation manifest must be valid JSON");
+        let observations = manifest["observations"]
+            .as_array()
+            .expect("producer observations must be an array");
+        assert_eq!(observations.len(), 4);
+
+        for observation in observations {
+            let id = observation["id"]
+                .as_str()
+                .expect("producer observation must have an id");
+            let dialect = observation["dialect"]
+                .as_object()
+                .expect("producer observation must describe a dialect");
+            let witnesses = observation["witnesses"]
+                .as_object()
+                .expect("producer observation must map facts to witnesses");
+
+            for (fact, value) in dialect {
+                let witness = witnesses[fact]
+                    .as_str()
+                    .expect("each dialect fact must have an owned witness");
+                let projection = project_owned_witness(witness);
+                match fact.as_str() {
+                    "namespace_iri" => {
+                        let namespace = value.as_str().expect("namespace fact must be a string");
+                        assert!(
+                            projection
+                                .edges()
+                                .iter()
+                                .any(|edge| { edge.predicate().namespace_iri() == namespace })
+                                || projection.nodes().iter().any(|node| {
+                                    node.properties().iter().any(|property| {
+                                        property.term().namespace_iri() == namespace
+                                    })
+                                }),
+                            "{id} has no owned recognition witness for {namespace}"
+                        );
+                    }
+                    "connection_predicate" => {
+                        let iri = value
+                            .as_str()
+                            .expect("connection predicate fact must be a string");
+                        let (namespace, _) = iri
+                            .rsplit_once('#')
+                            .expect("connection predicate must be a full IRI");
+                        let namespace = format!("{namespace}#");
+                        assert!(
+                            projection.edges().iter().any(|edge| {
+                                edge.kind() == EdgeKind::Connection
+                                    && edge.predicate().namespace_iri() == namespace
+                                    && edge.predicate().term() == expected_term(iri)
+                            }),
+                            "{id} has no owned recognition witness for {iri}"
+                        );
+                    }
+                    "unit_predicates" => {
+                        for iri in value
+                            .as_array()
+                            .expect("unit predicate facts must be an array")
+                        {
+                            let iri = iri.as_str().expect("unit predicate must be a string");
+                            let (namespace, _) = iri
+                                .rsplit_once('#')
+                                .expect("unit predicate must be a full IRI");
+                            assert!(
+                                projection_has_term(
+                                    &projection,
+                                    &format!("{namespace}#"),
+                                    expected_term(iri),
+                                ),
+                                "{id} has no owned recognition witness for {iri}"
+                            );
+                        }
+                    }
+                    other => panic!("unsupported producer-observation fact: {other}"),
+                }
+            }
+        }
     }
 
     #[test]
