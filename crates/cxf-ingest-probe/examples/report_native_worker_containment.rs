@@ -5,6 +5,7 @@ mod enabled {
         io::{self, Read, Write},
         path::Path,
         process::{Child, ChildStdin, ChildStdout, Command, ExitCode, ExitStatus, Stdio},
+        sync::mpsc::{self, Receiver, TryRecvError},
         thread::{self, JoinHandle},
         time::{Duration, Instant},
     };
@@ -23,6 +24,9 @@ mod enabled {
     const DEADLINE: Duration = Duration::from_secs(1);
     const POLL_INTERVAL: Duration = Duration::from_millis(5);
     const MAX_CONCURRENCY: u64 = 1;
+    const OVERSIZED_RESPONSE_ATTEMPT_BYTES: usize = 1024 * 1024;
+
+    type IoThread<T> = JoinHandle<io::Result<T>>;
 
     const SEMANTIC_WORKER_ARG: &str = "--worker";
     const DELAY_WORKER_ARG: &str = "--worker-delay";
@@ -125,6 +129,8 @@ mod enabled {
         },
         ResponseLimit {
             observed_bytes: usize,
+            kill_sent: bool,
+            reaped: bool,
         },
         WorkerFailed {
             exit_code: Option<i32>,
@@ -161,6 +167,11 @@ mod enabled {
         deadline_response_bytes: usize,
         oversized_response_outcome: &'static str,
         oversized_response_observed_bytes: usize,
+        oversized_response_attempted_bytes: usize,
+        oversized_response_kill_sent: bool,
+        oversized_response_reaped: bool,
+        post_overflow_outcome: String,
+        post_overflow_response_bytes: usize,
         oversized_request_outcome: &'static str,
         oversized_request_observed_bytes: usize,
         unexpected_outcomes: u64,
@@ -272,19 +283,38 @@ mod enabled {
                 result => return Err(format!("worker deadline probe failed: {result:?}")),
             };
 
-        let oversized_response_observed_bytes =
-            match run_worker(&executable, b"null", WorkerMode::OversizedResponse) {
-                Err(ParentFailure::ResponseLimit { observed_bytes })
-                    if observed_bytes == RESPONSE_LIMIT_BYTES + 1 =>
-                {
-                    observed_bytes
-                }
-                result => {
-                    return Err(format!(
-                        "worker oversized-response probe failed: {result:?}"
-                    ));
-                }
-            };
+        let (
+            oversized_response_observed_bytes,
+            oversized_response_kill_sent,
+            oversized_response_reaped,
+        ) = match run_worker(&executable, b"null", WorkerMode::OversizedResponse) {
+            Err(ParentFailure::ResponseLimit {
+                observed_bytes,
+                kill_sent,
+                reaped,
+            }) if observed_bytes == RESPONSE_LIMIT_BYTES + 1 && kill_sent && reaped => {
+                (observed_bytes, kill_sent, reaped)
+            }
+            result => {
+                return Err(format!(
+                    "worker oversized-response probe failed: {result:?}"
+                ));
+            }
+        };
+
+        let post_overflow = completed(run_worker(
+            &executable,
+            br#"{"@id":"https://example.test/post-overflow"}"#,
+            WorkerMode::Semantic,
+        ))?;
+        if post_overflow.response.outcome != "success"
+            || post_overflow.response.source_matches_input != Some(true)
+        {
+            return Err(format!(
+                "worker host did not recover after response overflow: {:?}",
+                post_overflow.response
+            ));
+        }
 
         let oversized_request = vec![0; REQUEST_LIMIT_BYTES + 1];
         let oversized_request_observed_bytes = match run_worker(
@@ -329,6 +359,11 @@ mod enabled {
             deadline_response_bytes,
             oversized_response_outcome: "response_limit",
             oversized_response_observed_bytes,
+            oversized_response_attempted_bytes: OVERSIZED_RESPONSE_ATTEMPT_BYTES,
+            oversized_response_kill_sent,
+            oversized_response_reaped,
+            post_overflow_outcome: post_overflow.response.outcome,
+            post_overflow_response_bytes: post_overflow.response_bytes,
             oversized_request_outcome: "request_limit",
             oversized_request_observed_bytes,
             unexpected_outcomes: 0,
@@ -365,13 +400,11 @@ mod enabled {
                 write_response(&WorkerResponse::control(outcome))
             }
             WorkerMode::OversizedResponse => {
-                let output = vec![b'x'; RESPONSE_LIMIT_BYTES + 1];
+                let output = vec![b'x'; OVERSIZED_RESPONSE_ATTEMPT_BYTES];
                 let mut stdout = io::stdout().lock();
-                if stdout.write_all(&output).is_err() || stdout.flush().is_err() {
-                    ExitCode::FAILURE
-                } else {
-                    ExitCode::SUCCESS
-                }
+                let _ = stdout.write_all(&output);
+                thread::sleep(DEADLINE + Duration::from_secs(1));
+                ExitCode::FAILURE
             }
         }
     }
@@ -485,7 +518,7 @@ mod enabled {
                 ));
             }
         };
-        let reader = match spawn_reader(stdout) {
+        let (reader, response_limit) = match spawn_reader(stdout) {
             Ok(reader) => reader,
             Err(error) => {
                 stop_child(&mut child);
@@ -502,6 +535,17 @@ mod enabled {
         };
 
         let status = loop {
+            match response_limit.try_recv() {
+                Ok(observed_bytes) => {
+                    return Err(reject_oversized_response(
+                        &mut child,
+                        writer,
+                        reader,
+                        observed_bytes,
+                    ));
+                }
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
+            }
             if started.elapsed() >= DEADLINE {
                 return Err(expire_child(&mut child, writer, reader));
             }
@@ -535,6 +579,8 @@ mod enabled {
         if response_bytes.len() > RESPONSE_LIMIT_BYTES {
             return Err(ParentFailure::ResponseLimit {
                 observed_bytes: response_bytes.len(),
+                kill_sent: false,
+                reaped: true,
             });
         }
         if !status.success() || write_result.is_err() {
@@ -549,16 +595,10 @@ mod enabled {
 
     fn expire_child(
         child: &mut Child,
-        writer: JoinHandle<io::Result<()>>,
-        reader: JoinHandle<io::Result<Vec<u8>>>,
+        writer: IoThread<()>,
+        reader: IoThread<Vec<u8>>,
     ) -> ParentFailure {
-        let (kill_sent, reaped) = match child.try_wait() {
-            Ok(Some(_)) => (false, true),
-            Ok(None) | Err(_) => {
-                let kill_sent = child.kill().is_ok();
-                (kill_sent, child.wait().is_ok())
-            }
-        };
+        let (kill_sent, reaped) = terminate_child(child);
         let _ = join_io(writer);
         let response_bytes = join_io(reader).map_or(0, |bytes| bytes.len());
         ParentFailure::DeadlineExceeded {
@@ -568,12 +608,38 @@ mod enabled {
         }
     }
 
+    fn reject_oversized_response(
+        child: &mut Child,
+        writer: IoThread<()>,
+        reader: IoThread<Vec<u8>>,
+        observed_bytes: usize,
+    ) -> ParentFailure {
+        let (kill_sent, reaped) = terminate_child(child);
+        let _ = join_io(writer);
+        let _ = join_io(reader);
+        ParentFailure::ResponseLimit {
+            observed_bytes,
+            kill_sent,
+            reaped,
+        }
+    }
+
+    fn terminate_child(child: &mut Child) -> (bool, bool) {
+        match child.try_wait() {
+            Ok(Some(_)) => (false, true),
+            Ok(None) | Err(_) => {
+                let kill_sent = child.kill().is_ok();
+                (kill_sent, child.wait().is_ok())
+            }
+        }
+    }
+
     fn stop_child(child: &mut Child) {
         let _ = child.kill();
         let _ = child.wait();
     }
 
-    fn spawn_writer(stdin: ChildStdin, input: Vec<u8>) -> io::Result<JoinHandle<io::Result<()>>> {
+    fn spawn_writer(stdin: ChildStdin, input: Vec<u8>) -> io::Result<IoThread<()>> {
         thread::Builder::new()
             .name("cxf-worker-request".to_owned())
             .spawn(move || {
@@ -583,19 +649,25 @@ mod enabled {
             })
     }
 
-    fn spawn_reader(stdout: ChildStdout) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
-        thread::Builder::new()
+    fn spawn_reader(stdout: ChildStdout) -> io::Result<(IoThread<Vec<u8>>, Receiver<usize>)> {
+        let (limit_sender, limit_receiver) = mpsc::sync_channel(1);
+        let reader = thread::Builder::new()
             .name("cxf-worker-response".to_owned())
             .spawn(move || {
                 let mut bytes = Vec::with_capacity(RESPONSE_LIMIT_BYTES + 1);
-                stdout
+                let result = stdout
                     .take((RESPONSE_LIMIT_BYTES + 1) as u64)
-                    .read_to_end(&mut bytes)?;
+                    .read_to_end(&mut bytes);
+                if result.is_ok() && bytes.len() > RESPONSE_LIMIT_BYTES {
+                    let _ = limit_sender.send(bytes.len());
+                }
+                result?;
                 Ok(bytes)
-            })
+            })?;
+        Ok((reader, limit_receiver))
     }
 
-    fn join_io<T>(handle: JoinHandle<io::Result<T>>) -> Result<T, ParentFailure> {
+    fn join_io<T>(handle: IoThread<T>) -> Result<T, ParentFailure> {
         handle
             .join()
             .map_err(|_| ParentFailure::Io("worker I/O thread panicked".to_owned()))?

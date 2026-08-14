@@ -261,9 +261,12 @@ deadline.
 The revision-bound CI report verifies the 32,768-value production workload, the
 repository remote-context failure, denial of a controlled 512 MiB address-space
 reservation, kill/reap after a controlled delay, response overflow, and rejection
-of an oversized request before spawn. Worker replies contain a fixed outcome,
-source-match boolean, counters, and the configured address-space cap. They contain
-no source bytes, RDF values, ordered source tree, or backend diagnostic text.
+of an oversized request before spawn. The overflow case attempts one MiB of output
+and deliberately remains alive after the parent observes byte 4,097. The parent kills
+and reaps that child, then launches a semantic worker successfully. Worker replies
+contain a fixed outcome, source-match boolean, counters, and the configured
+address-space cap. They contain no source bytes, RDF values, ordered source tree, or
+backend diagnostic text.
 
 `RLIMIT_AS` bounds virtual address space, not RSS. The constants belong to the
 evidence harness; they are not parser options, package defaults, or release
