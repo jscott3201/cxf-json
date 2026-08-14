@@ -553,12 +553,7 @@ mod enabled {
                 Ok(Some(status)) if started.elapsed() < DEADLINE => break status,
                 Ok(Some(_)) => {
                     let _ = join_io(writer);
-                    let response_bytes = join_io(reader).map_or(0, |bytes| bytes.len());
-                    return Err(ParentFailure::DeadlineExceeded {
-                        kill_sent: false,
-                        reaped: true,
-                        response_bytes,
-                    });
+                    return Err(deadline_or_response_limit(false, true, join_io(reader)));
                 }
                 Ok(None) => {
                     let remaining = DEADLINE.saturating_sub(started.elapsed());
@@ -600,11 +595,27 @@ mod enabled {
     ) -> ParentFailure {
         let (kill_sent, reaped) = terminate_child(child);
         let _ = join_io(writer);
-        let response_bytes = join_io(reader).map_or(0, |bytes| bytes.len());
-        ParentFailure::DeadlineExceeded {
-            kill_sent,
-            reaped,
-            response_bytes,
+        deadline_or_response_limit(kill_sent, reaped, join_io(reader))
+    }
+
+    fn deadline_or_response_limit(
+        kill_sent: bool,
+        reaped: bool,
+        response: Result<Vec<u8>, ParentFailure>,
+    ) -> ParentFailure {
+        let response_bytes = response.map_or(0, |bytes| bytes.len());
+        if response_bytes > RESPONSE_LIMIT_BYTES {
+            ParentFailure::ResponseLimit {
+                observed_bytes: response_bytes,
+                kill_sent,
+                reaped,
+            }
+        } else {
+            ParentFailure::DeadlineExceeded {
+                kill_sent,
+                reaped,
+                response_bytes,
+            }
         }
     }
 
@@ -800,6 +811,18 @@ mod enabled {
             ] {
                 assert!(!encoded.contains(forbidden));
             }
+        }
+
+        #[test]
+        fn captured_response_overflow_precedes_deadline_classification() {
+            assert_eq!(
+                deadline_or_response_limit(true, true, Ok(vec![0; RESPONSE_LIMIT_BYTES + 1])),
+                ParentFailure::ResponseLimit {
+                    observed_bytes: RESPONSE_LIMIT_BYTES + 1,
+                    kill_sent: true,
+                    reaped: true,
+                }
+            );
         }
     }
 }
