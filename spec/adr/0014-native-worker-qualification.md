@@ -117,9 +117,10 @@ another document.
 
 Before dispatch, the controller and worker must agree on a project-owned semantic
 contract identifier covering the profile version, typed-result schema, JSON-LD mode,
-and pinned authority revisions. A mismatch is a protocol host failure. The identifier
-allows the private transport to change without treating two semantic contracts as the
-same protocol.
+pinned authority revisions, and the effective per-request `ParseOptions`, including
+document IRI and every project limit. A mismatch is a protocol host failure. The
+identifier allows the private transport to change without treating two semantic
+contracts as the same protocol.
 
 The logical outcomes are:
 
@@ -161,11 +162,13 @@ deadline, cleanup deadline, and target memory limit. Deployments with multiple
 application processes need an operator-owned aggregate limit outside the package.
 
 Admission reserves the retained source, parent and transport copies, maximum response,
-worker memory allowance, and fixed controller overhead before queueing. The
-reservation remains charged through response validation and reap. Every settled path
-releases it exactly once; fail-stop releases all reservations with process teardown. A
-full count or byte budget fails with a fixed capacity outcome; neither budget grows
-without a bound.
+controller decoder scratch, maximum decoded DTO and typed-result allocations,
+extension/diagnostic/finding storage, worker memory allowance, and fixed controller
+overhead before queueing. Every controller-side decoder and result allocation is
+charged to that reservation. The reservation remains charged through response
+validation and reap. Every settled path releases it exactly once; fail-stop releases
+all reservations with process teardown. A full count or byte budget fails with a fixed
+capacity outcome; neither budget grows without a bound.
 
 Each target must name the memory quantity it enforces and test the implementation that
 ships:
@@ -174,7 +177,13 @@ ships:
 |---|---|
 | Linux | Install a hard containment-group or process memory limit before request reading; name its exact metric; prevent descendant escape or contain the full process tree; install parent-death termination with its startup race closed; terminate and reap on every forced-failure path |
 | macOS | Install and test the selected hard process limit before request reading on every supported release; prevent or contain descendants; install a tested parent-liveness termination mechanism; do not infer safety from RSS benchmark observations; terminate and reap on every forced-failure path |
-| Windows | Assign the worker to a configured Job Object before execution; apply process/job committed-memory and active-process controls; prohibit breakaway; set `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; keep the job handle non-inheritable and inaccessible to the worker; terminate the job on forced failure; wait for process completion and close process, thread, and job handles |
+| Windows | Configure the Job Object before process creation and associate it atomically through `PROC_THREAD_ATTRIBUTE_JOB_LIST`; post-creation `AssignProcessToJobObject` alone does not qualify; apply process/job committed-memory and active-process controls; prohibit breakaway; set `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; keep the job handle non-inheritable and inaccessible to the worker; terminate the job on forced failure; wait for process completion and close process, thread, and job handles |
+
+Microsoft documents
+[`PROC_THREAD_ATTRIBUTE_JOB_LIST`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)
+for Windows 10 and Windows Server 2016 or newer. W-020 cannot advertise an older
+Windows target unless another mechanism closes the creation-to-Job-assignment race and
+passes the same qualification cases.
 
 No target may fall back to in-process parsing after containment setup, spawn,
 handshake, transfer, protocol, crash, deadline, cleanup, or capacity failure. It
@@ -216,7 +225,13 @@ verify:
 - fresh-worker success after deadline, crash, and overflow;
 - distinct process identity, successful reap, closed handles, and no zombie or handle
   growth across repeated ordinary successes;
+- no zombie, handle, file-descriptor, containment-group, Job Object, or reserved-byte
+  growth across repeated deadline, cancellation, crash, protocol, response-overflow,
+  memory-limit, and setup failures;
 - exact source association without source bytes in the worker response;
+- exact agreement with an independently authored, repository-owned expected-result
+  corpus for projection completeness and findings; generated expectations from the
+  implementation under test do not qualify;
 - identical project-owned typed projection and finding evidence across Linux, macOS,
   and Windows for well-resourced profile fixtures, excluding backend-assigned blank-node
   labels and allowing variation only in named host failures;
@@ -236,8 +251,15 @@ verify:
   decode path.
 - Worker qualification cannot establish CXF or CDL conformance. Before a public
   conformance claim, the profile must pin the Standard 231 edition and reviewed clauses,
-  the Modelica Buildings basis, and the exact CXF-Core artifact revision, then resolve
-  any disagreement as an explicit profile decision rather than transport behavior.
+  source-free content digests and immutable evidence URLs for the public OBC CDL/CXF
+  references, the governing JSON-LD edition, and each CXF-Core artifact used as
+  evidence. D-024 still prohibits tracked external bytes. The licensed standard and
+  artifacts it normatively incorporates define CXF/CDL conformance; the pinned W3C
+  JSON-LD edition defines the linked-data mechanics they invoke. OBC pages, Modelica
+  Buildings versions, producer output, and other artifacts remain compatibility
+  evidence unless the reviewed standard explicitly makes a pinned artifact normative.
+  Any disagreement must become an explicit profile decision, and a project deviation
+  cannot be called Standard 231 conformant.
 - D-029 stays open. The package remains unpublished and exposes no parser, worker,
   protocol, or containment API.
 - Profile 0.1.8 does not change because this governance decision defines no observable
