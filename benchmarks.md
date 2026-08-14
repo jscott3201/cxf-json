@@ -282,9 +282,9 @@ worker awaits its request header, runs a controlled long operation, and fills th
 response pipe. Startup reads fail on EOF; after request framing, a watchdog exits with
 status 86 on EOF. Before registering `EVFILT_PROC`, the report verifies the worker PID,
 parent PID, and process start time. It checks that identity again after registration,
-observes `NOTE_EXIT`, requires watchdog status 86, and reaps the worker through the
-retained handle. This tests one direct worker only. It does not establish descendant
-containment or a sandbox.
+observes `NOTE_EXIT`, requires failure status 1 before framing or watchdog status 86
+after framing, and reaps the worker through the retained handle. This tests one direct
+worker only. It does not establish descendant containment or a sandbox.
 
 A clean release run at revision `f9f9d355e2e0538243ba098493a3d1ba2eb46bff`
 on the primary arm64 development machine recorded macOS 26.6 build 25G70, Darwin

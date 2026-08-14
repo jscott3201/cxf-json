@@ -134,6 +134,13 @@ mod enabled {
                 Self::Response => "response_write_started",
             }
         }
+
+        const fn expected_exit_code(self) -> i32 {
+            match self {
+                Self::Startup => 1,
+                Self::Execution | Self::Response => 86,
+            }
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -897,9 +904,9 @@ mod enabled {
                 return Err(format!("parent-liveness worker reap failed: {error}"));
             }
         };
-        if status.code() != Some(86) {
+        if status.code() != Some(stage.expected_exit_code()) {
             return Err(format!(
-                "parent-liveness {} worker did not exit through the stdin watchdog",
+                "parent-liveness {} worker did not take the expected stdin-EOF exit path",
                 stage.name()
             ));
         }
@@ -1600,7 +1607,7 @@ mod enabled {
 
     const fn parent_liveness_mechanism() -> &'static str {
         if cfg!(target_os = "macos") {
-            "framed_stdin_eof_with_kqueue_watchdog_status_and_direct_reap"
+            "framed_stdin_eof_with_kqueue_stage_status_and_direct_reap"
         } else {
             "not_evaluated"
         }
