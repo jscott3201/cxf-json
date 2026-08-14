@@ -103,7 +103,7 @@ EXPECTED_OBSERVATIONS = {
         },
         "evidence": {
             "class": "operator-git-corpus",
-            "url": "https://github.com/jscott3201/open-control-engine/tree/8fbec096a682b3ff930dcdaa89c6f0a83bf8cd67/third_party/modelica-buildings-cdl/cxf",
+            "url": "https://github.com/jscott3201/open-control-engine/blob/8fbec096a682b3ff930dcdaa89c6f0a83bf8cd67/third_party/modelica-buildings-cdl/README.md",
         },
     },
 }
