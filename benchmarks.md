@@ -286,7 +286,7 @@ observes `NOTE_EXIT`, requires failure status 1 before framing or watchdog statu
 after framing, and reaps the worker through the retained handle. This tests one direct
 worker only. It does not establish descendant containment or a sandbox.
 
-A clean release run at revision `d367ea228d510151bd9ed4760fc0878d5d53cb9a`
+A clean release run at revision `eb04a7b62534cd7abd7cdaedd6e290ef9827a819`
 on the primary arm64 development machine recorded macOS 26.6 build 25G70, Darwin
 25.6.0, and 16 GiB of physical memory. The first accepted finite `RLIMIT_AS` candidate
 was 512 GiB; a 1 TiB `PROT_NONE` mapping was denied. The 32,768-value semantic case,
