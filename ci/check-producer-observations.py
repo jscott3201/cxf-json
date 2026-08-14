@@ -300,8 +300,11 @@ def verify_observation(observation, index, trusted_root, expected_observations):
 def verify(manifest, trusted_root=None, expected_observations=EXPECTED_OBSERVATIONS):
     trusted_root = Path.cwd() if trusted_root is None else trusted_root
     try:
+        manifest_text = read_regular_file(
+            manifest, trusted_root, MAX_MANIFEST_BYTES
+        ).decode("utf-8")
         document = json.loads(
-            read_regular_file(manifest, trusted_root, MAX_MANIFEST_BYTES),
+            manifest_text,
             object_pairs_hook=unique_object,
         )
     except (UnicodeDecodeError, json.JSONDecodeError) as error:

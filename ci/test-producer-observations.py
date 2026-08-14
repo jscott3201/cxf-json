@@ -147,6 +147,11 @@ class ProducerObservationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate JSON member"):
             observations.verify(self.manifest, self.root, self.expected_observations)
 
+    def test_rejects_non_utf8_json(self):
+        self.manifest.write_bytes(json.dumps(self.document).encode("utf-16"))
+        with self.assertRaisesRegex(ValueError, "valid UTF-8 JSON"):
+            observations.verify(self.manifest, self.root, self.expected_observations)
+
 
 if __name__ == "__main__":
     unittest.main()
