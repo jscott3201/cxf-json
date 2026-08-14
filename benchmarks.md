@@ -285,7 +285,7 @@ it checks that identity again after registration, then observes `NOTE_EXIT` afte
 controller death. This tests one direct worker only. It does not establish descendant
 containment or a sandbox.
 
-A clean release run at revision `1c8a2daccb185a506e7033a3246e3a87f94e5320`
+A clean release run at revision `f9f9d355e2e0538243ba098493a3d1ba2eb46bff`
 on the primary arm64 development machine recorded macOS 26.6 build 25G70, Darwin
 25.6.0, and 16 GiB of physical memory. The first accepted finite `RLIMIT_AS` candidate
 was 512 GiB; a 1 TiB `PROT_NONE` mapping was denied. The 32,768-value semantic case,
