@@ -255,8 +255,9 @@ limits or release thresholds.
 `report_native_worker_containment` re-executes one project instrumentation binary as
 one child at a time on Linux and macOS. The parent admits at most 1 MiB, accepts at
 most 4 KiB of stdout, discards stderr, and kills and reaps the child after a one-second
-wall-clock deadline. A length-prefixed stdin request leaves the pipe open while the
-worker runs.
+monotonic deadline. Successful settlement includes response validation before the
+parent observes that deadline; this is not a real-time scheduling claim. A length-
+prefixed stdin request leaves the pipe open while the worker runs.
 
 On Linux, the child applies a 256 MiB `RLIMIT_AS` before reading input or entering
 OxJSONLD. On macOS, the semantic workers have no active memory limit. A separate probe
@@ -265,22 +266,24 @@ address limit plus whether a mapping twice that size is denied. The report compa
 that limit with physical memory and remains unqualified; it does not substitute RSS or
 claim that a virtual-address limit above physical memory contains allocation.
 
-The revision-bound CI report verifies the 32,768-value production workload, the
-repository remote-context failure, denial of a controlled 512 MiB address-space
-reservation, kill/reap after a controlled delay, response overflow, and rejection
-of an oversized request before spawn. The overflow case attempts one MiB of output
-and deliberately remains alive after the parent observes byte 4,097. The parent kills
-and reaps that child, then launches a semantic worker successfully. Worker replies
-contain a fixed outcome, source-match boolean, counters, and target memory-policy
-identity. They contain no source bytes, RDF values, ordered source tree, or backend
-diagnostic text.
+The Linux report verifies denial of a controlled 512 MiB address-space reservation.
+Both target reports verify the 32,768-value production workload, the repository remote-
+context failure, kill/reap after a controlled delay, response overflow, and rejection
+of an oversized request before spawn. The overflow case attempts one MiB of output and
+deliberately remains alive after the parent observes byte 4,097. The parent kills and
+reaps that child, then launches a semantic worker successfully. Worker replies contain
+a fixed outcome, source-match boolean, counters, and target memory-policy identity.
+They contain no source bytes, RDF values, ordered source tree, or backend diagnostic
+text.
 
-The macOS report also kills an intermediate controller during worker startup,
-execution, and response handling. The framed stdin pipe closes with the controller;
-startup reads fail on EOF, while a worker watchdog exits on EOF after request framing.
-The report registers `EVFILT_PROC` before killing the controller and observes
-`NOTE_EXIT` for the worker after each controller death. This tests one direct worker
-only. It does not establish descendant containment or a sandbox.
+The macOS report also kills an intermediate controller while the worker awaits its
+request header, runs a controlled long operation, and fills a response pipe held by the
+controller. The framed stdin pipe closes with the controller; startup reads fail on
+EOF, while a worker watchdog exits on EOF after request framing. Before registering
+`EVFILT_PROC`, the report verifies the worker PID, parent PID, and process start time;
+it checks that identity again after registration, then observes `NOTE_EXIT` after
+controller death. This tests one direct worker only. It does not establish descendant
+containment or a sandbox.
 
 A clean release run at revision `1c8a2daccb185a506e7033a3246e3a87f94e5320`
 on the primary arm64 development machine recorded macOS 26.6 build 25G70, Darwin

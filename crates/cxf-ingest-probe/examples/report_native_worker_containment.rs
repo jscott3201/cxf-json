@@ -118,6 +118,14 @@ mod enabled {
                 Self::Response => "response",
             }
         }
+
+        const fn evidence_point(self) -> &'static str {
+            match self {
+                Self::Startup => "request_header_pending",
+                Self::Execution => "controlled_execution_entered",
+                Self::Response => "response_write_started",
+            }
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -125,12 +133,49 @@ mod enabled {
     #[serde(deny_unknown_fields)]
     struct ParentLivenessReady {
         worker_pid: u32,
+        worker_parent_pid: u32,
+        worker_start_seconds: u64,
+        worker_start_microseconds: u64,
         stage: String,
+        evidence_point: String,
+    }
+
+    #[cfg(target_os = "macos")]
+    #[derive(Clone, Copy, Eq, PartialEq)]
+    struct ProcessIdentity {
+        pid: u32,
+        parent_pid: u32,
+        start_seconds: u64,
+        start_microseconds: u64,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl ParentLivenessReady {
+        fn new(stage: ParentLivenessStage, identity: ProcessIdentity) -> Self {
+            Self {
+                worker_pid: identity.pid,
+                worker_parent_pid: identity.parent_pid,
+                worker_start_seconds: identity.start_seconds,
+                worker_start_microseconds: identity.start_microseconds,
+                stage: stage.name().to_owned(),
+                evidence_point: stage.evidence_point().to_owned(),
+            }
+        }
+
+        const fn identity(&self) -> ProcessIdentity {
+            ProcessIdentity {
+                pid: self.worker_pid,
+                parent_pid: self.worker_parent_pid,
+                start_seconds: self.worker_start_seconds,
+                start_microseconds: self.worker_start_microseconds,
+            }
+        }
     }
 
     #[cfg(target_os = "macos")]
     struct ProcessExitWatcher {
         queue: libc::c_int,
+        pid: u32,
     }
 
     #[cfg(target_os = "macos")]
@@ -140,7 +185,7 @@ mod enabled {
             if queue == -1 {
                 return Err(io::Error::last_os_error());
             }
-            let watcher = Self { queue };
+            let watcher = Self { queue, pid };
             let change = libc::kevent {
                 ident: pid as libc::uintptr_t,
                 filter: libc::EVFILT_PROC,
@@ -211,6 +256,7 @@ mod enabled {
                 return Err(io::Error::last_os_error());
             }
             Ok(received == 1
+                && event.ident == self.pid as libc::uintptr_t
                 && event.filter == libc::EVFILT_PROC
                 && event.fflags & libc::NOTE_EXIT != 0)
         }
@@ -340,6 +386,7 @@ mod enabled {
         memory_probe_limit_bytes: Option<u64>,
         memory_qualification_status: &'static str,
         deadline_millis: u128,
+        deadline_observation: &'static str,
         request_limit_bytes: usize,
         response_limit_bytes: usize,
         max_concurrency: u64,
@@ -621,6 +668,7 @@ mod enabled {
             memory_probe_limit_bytes,
             memory_qualification_status,
             deadline_millis: DEADLINE.as_millis(),
+            deadline_observation: "parent_monotonic_through_response_validation",
             request_limit_bytes: REQUEST_LIMIT_BYTES,
             response_limit_bytes: RESPONSE_LIMIT_BYTES,
             max_concurrency: MAX_CONCURRENCY,
@@ -694,7 +742,13 @@ mod enabled {
             .join()
             .map_err(|_| "parent-liveness reader panicked".to_owned())?
             .map_err(|error| format!("parent-liveness controller response failed: {error}"))?;
-        if ready.stage != stage.name() || ready.worker_pid == controller.id() {
+        let identity = ready.identity();
+        if ready.stage != stage.name()
+            || ready.evidence_point != stage.evidence_point()
+            || identity.pid == controller.id()
+            || identity.parent_pid != controller.id()
+            || process_identity(identity.pid).ok() != Some(identity)
+        {
             stop_child(&mut controller);
             return Err(format!(
                 "parent-liveness {} controller returned an invalid identity",
@@ -702,43 +756,78 @@ mod enabled {
             ));
         }
 
-        let exit_watcher = ProcessExitWatcher::register(ready.worker_pid).map_err(|error| {
+        let exit_watcher = ProcessExitWatcher::register(identity.pid).map_err(|error| {
             stop_child(&mut controller);
             format!(
                 "parent-liveness {} worker exit watch failed: {error}",
                 stage.name()
             )
         })?;
+        if process_identity(identity.pid).ok() != Some(identity) {
+            stop_child(&mut controller);
+            return Err(format!(
+                "parent-liveness {} worker identity changed during registration",
+                stage.name()
+            ));
+        }
 
         let (kill_sent, reaped) = terminate_child(&mut controller);
         if !kill_sent || !reaped {
-            unsafe {
-                libc::kill(ready.worker_pid as libc::pid_t, libc::SIGKILL);
-            }
+            kill_process_if_same(identity);
             return Err(format!(
                 "parent-liveness {} controller was not killed and reaped",
                 stage.name()
             ));
         }
         let worker_exited = exit_watcher.wait().map_err(|error| {
-            unsafe {
-                libc::kill(ready.worker_pid as libc::pid_t, libc::SIGKILL);
-            }
+            kill_process_if_same(identity);
             format!(
                 "parent-liveness {} worker exit wait failed: {error}",
                 stage.name()
             )
         })?;
         if !worker_exited {
-            unsafe {
-                libc::kill(ready.worker_pid as libc::pid_t, libc::SIGKILL);
-            }
+            kill_process_if_same(identity);
             return Err(format!(
                 "parent-liveness {} worker survived controller death",
                 stage.name()
             ));
         }
         Ok("worker_exited_after_controller_death")
+    }
+
+    #[cfg(target_os = "macos")]
+    fn process_identity(pid: u32) -> io::Result<ProcessIdentity> {
+        let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+        let size = std::mem::size_of::<libc::proc_bsdinfo>();
+        let read = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                info.as_mut_ptr().cast(),
+                size as libc::c_int,
+            )
+        };
+        if read != size as libc::c_int {
+            return Err(io::Error::last_os_error());
+        }
+        let info = unsafe { info.assume_init() };
+        Ok(ProcessIdentity {
+            pid: info.pbi_pid,
+            parent_pid: info.pbi_ppid,
+            start_seconds: info.pbi_start_tvsec,
+            start_microseconds: info.pbi_start_tvusec,
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn kill_process_if_same(identity: ProcessIdentity) {
+        if process_identity(identity.pid).ok() == Some(identity) {
+            unsafe {
+                libc::kill(identity.pid as libc::pid_t, libc::SIGKILL);
+            }
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -778,11 +867,11 @@ mod enabled {
             .ok_or_else(|| "parent-liveness worker stdin was not captured".to_owned())?;
 
         let mut writer = None;
+        let mut worker_stdout = None;
         let ready = if matches!(stage, ParentLivenessStage::Startup) {
-            ParentLivenessReady {
-                worker_pid: worker.id(),
-                stage: stage.name().to_owned(),
-            }
+            let identity = process_identity(worker.id())
+                .map_err(|error| format!("failed to identify startup worker: {error}"))?;
+            ParentLivenessReady::new(stage, identity)
         } else {
             let input = if matches!(stage, ParentLivenessStage::Response) {
                 retained_values_input(1_024)
@@ -793,12 +882,20 @@ mod enabled {
                 spawn_writer(stdin, input)
                     .map_err(|error| format!("failed to write liveness request: {error}"))?,
             );
-            let stdout = worker
+            let mut stdout = worker
                 .stdout
                 .take()
                 .ok_or_else(|| "parent-liveness worker stdout was not captured".to_owned())?;
-            read_parent_liveness_ready(stdout)
-                .map_err(|error| format!("parent-liveness worker did not become ready: {error}"))?
+            let ready = read_parent_liveness_ready(&mut stdout)
+                .map_err(|error| format!("parent-liveness worker did not become ready: {error}"))?;
+            if matches!(stage, ParentLivenessStage::Response) {
+                let mut entered_response = vec![0; RESPONSE_LIMIT_BYTES];
+                stdout.read_exact(&mut entered_response).map_err(|error| {
+                    format!("parent-liveness worker did not enter response write: {error}")
+                })?;
+            }
+            worker_stdout = Some(stdout);
+            ready
         };
 
         let mut output = io::stdout().lock();
@@ -810,6 +907,7 @@ mod enabled {
         }
 
         thread::sleep(DEADLINE + Duration::from_secs(10));
+        drop(worker_stdout);
         stop_child(&mut worker);
         if let Some(writer) = writer {
             let _ = finish_writer(writer);
@@ -896,12 +994,26 @@ mod enabled {
             }
             #[cfg(target_os = "macos")]
             WorkerMode::ParentLivenessExecution => {
-                write_parent_liveness_ready(ParentLivenessStage::Execution)
+                if enter_controlled_execution().is_err() {
+                    return ExitCode::FAILURE;
+                }
+                if write_parent_liveness_ready(ParentLivenessStage::Execution).is_err() {
+                    return ExitCode::FAILURE;
+                }
+                thread::sleep(DEADLINE + Duration::from_secs(10));
+                ExitCode::FAILURE
             }
             #[cfg(target_os = "macos")]
             WorkerMode::ParentLivenessResponse => {
                 let _ = observe(&input, &options());
-                write_parent_liveness_ready(ParentLivenessStage::Response)
+                if write_parent_liveness_ready(ParentLivenessStage::Response).is_err() {
+                    return ExitCode::FAILURE;
+                }
+                let output = vec![b'x'; OVERSIZED_RESPONSE_ATTEMPT_BYTES];
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(&output);
+                thread::sleep(DEADLINE + Duration::from_secs(10));
+                ExitCode::FAILURE
             }
         }
     }
@@ -1007,20 +1119,35 @@ mod enabled {
     }
 
     #[cfg(target_os = "macos")]
-    fn write_parent_liveness_ready(stage: ParentLivenessStage) -> ExitCode {
-        let ready = ParentLivenessReady {
-            worker_pid: std::process::id(),
-            stage: stage.name().to_owned(),
-        };
+    fn enter_controlled_execution() -> io::Result<()> {
+        let (entered_sender, entered_receiver) = mpsc::sync_channel(0);
+        thread::Builder::new()
+            .name("cxf-worker-controlled-execution".to_owned())
+            .spawn(move || {
+                if entered_sender.send(()).is_err() {
+                    return;
+                }
+                loop {
+                    thread::sleep(Duration::from_secs(1));
+                }
+            })?;
+        entered_receiver.recv().map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("controlled execution did not start: {error}"),
+            )
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn write_parent_liveness_ready(stage: ParentLivenessStage) -> io::Result<()> {
+        let identity = process_identity(std::process::id())?;
+        let ready = ParentLivenessReady::new(stage, identity);
         let mut stdout = io::stdout().lock();
-        if serde_json::to_writer(&mut stdout, &ready).is_err()
-            || stdout.write_all(b"\n").is_err()
-            || stdout.flush().is_err()
-        {
-            return ExitCode::FAILURE;
-        }
-        thread::sleep(DEADLINE + Duration::from_secs(10));
-        ExitCode::FAILURE
+        serde_json::to_writer(&mut stdout, &ready)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        stdout.write_all(b"\n")?;
+        stdout.flush()
     }
 
     fn write_response(response: &WorkerResponse) -> ExitCode {
@@ -1138,10 +1265,25 @@ mod enabled {
                 reaped: true,
             });
         }
+        if started.elapsed() >= DEADLINE {
+            return Err(ParentFailure::DeadlineExceeded {
+                kill_sent: false,
+                reaped: true,
+                response_bytes: response_bytes.len(),
+            });
+        }
         if !status.success() || write_result.is_err() {
             return Err(worker_failed(status));
         }
-        let response = decode_response(&response_bytes)?;
+        let response = decode_response(&response_bytes);
+        if started.elapsed() >= DEADLINE {
+            return Err(ParentFailure::DeadlineExceeded {
+                kill_sent: false,
+                reaped: true,
+                response_bytes: response_bytes.len(),
+            });
+        }
+        let response = response?;
         Ok(CompletedWorker {
             response,
             response_bytes: response_bytes.len(),
