@@ -130,9 +130,9 @@ allowlists, and runs a bounded coverage-guided parser campaign.
 
 [`benchmarks.md`](benchmarks.md) records corpus, resource-stress, private
 production semantic, and WASM baselines with workload identities and
-reproduction commands. It also records Linux worker-containment **mechanism
-evidence** without calling it a resource-safety baseline or host API. Those
-records are development evidence, not package performance promises.
+reproduction commands. It also records Linux and macOS worker-containment
+**mechanism evidence** without calling either target resource-safe or exposing a
+host API. Those records are development evidence, not package performance promises.
 
 ## Security posture
 

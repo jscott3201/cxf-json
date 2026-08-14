@@ -250,13 +250,20 @@ establish a performance change from the `3b56d18` end-to-end baseline. Stage and
 end-to-end values remain environment-specific compatibility evidence, not parser
 limits or release thresholds.
 
-### Linux Worker-Containment Evidence
+### Native Worker-Containment Evidence
 
 `report_native_worker_containment` re-executes one project instrumentation binary as
-one child at a time. The child applies a 256 MiB `RLIMIT_AS` before reading input or
-entering OxJSONLD. The parent admits at most 1 MiB, accepts at most 4 KiB of stdout,
-discards stderr, and kills and reaps the child after a one-second wall-clock
-deadline.
+one child at a time on Linux and macOS. The parent admits at most 1 MiB, accepts at
+most 4 KiB of stdout, discards stderr, and kills and reaps the child after a one-second
+wall-clock deadline. A length-prefixed stdin request leaves the pipe open while the
+worker runs.
+
+On Linux, the child applies a 256 MiB `RLIMIT_AS` before reading input or entering
+OxJSONLD. On macOS, the semantic workers have no active memory limit. A separate probe
+tries increasing finite `RLIMIT_AS` values and reports the first accepted virtual-
+address limit plus whether a mapping twice that size is denied. The report compares
+that limit with physical memory and remains unqualified; it does not substitute RSS or
+claim that a virtual-address limit above physical memory contains allocation.
 
 The revision-bound CI report verifies the 32,768-value production workload, the
 repository remote-context failure, denial of a controlled 512 MiB address-space
@@ -264,14 +271,21 @@ reservation, kill/reap after a controlled delay, response overflow, and rejectio
 of an oversized request before spawn. The overflow case attempts one MiB of output
 and deliberately remains alive after the parent observes byte 4,097. The parent kills
 and reaps that child, then launches a semantic worker successfully. Worker replies
-contain a fixed outcome, source-match boolean, counters, and the configured
-address-space cap. They contain no source bytes, RDF values, ordered source tree, or
-backend diagnostic text.
+contain a fixed outcome, source-match boolean, counters, and target memory-policy
+identity. They contain no source bytes, RDF values, ordered source tree, or backend
+diagnostic text.
+
+The macOS report also kills an intermediate controller during worker startup,
+execution, and response handling. The framed stdin pipe closes with the controller;
+startup reads fail on EOF, while a worker watchdog exits on EOF after request framing.
+The report verifies the worker PID disappears after each controller death. This tests
+one direct worker only. It does not establish descendant containment or a sandbox.
 
 `RLIMIT_AS` bounds virtual address space, not RSS. The constants belong to the
 evidence harness; they are not parser options, package defaults, or release
-thresholds. D-029 remains open because no supported native host boundary, bounded
-host-wide worker pool, macOS/Windows mechanism, or browser/Node Worker exists.
+thresholds. D-029 remains open because no supported native host boundary, hard macOS
+memory policy, descendant containment, bounded host-wide worker pool, Windows
+implementation, or browser/Node Worker exists.
 
 ## Reproduction
 
