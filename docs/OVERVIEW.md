@@ -36,7 +36,7 @@ validation, and language bindings — are not exposed yet.
 | Conformance validation | Private validator core | Stable private `CXF-V-*` rule codes since profile 0.1.6; no public validation surface |
 | Namespace acceptance policy | Private findings | Normative matrix with `CXF-C-*` warning findings since profile 0.1.7; nothing rejected beyond preflight |
 | Composed private stages | Private crate operation | Retains RDF evidence beside source-derived projection and validation findings without claiming a source/RDF identity join |
-| Untrusted-input safety | Not built | Backend memory, time, diagnostics, and host policy remain open |
+| Untrusted-input safety | Qualification contract only | [ADR 0014](../spec/adr/0014-native-worker-qualification.md) covers future Linux, macOS, and Windows workers; no target is qualified and D-029 remains open |
 
 ## What the probe demonstrates
 

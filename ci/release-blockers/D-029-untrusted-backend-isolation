@@ -1,6 +1,10 @@
 D-029 blocks public untrusted-input release while OxJSONLD runs in process without
-hard cancellation or internal allocation and diagnostic budgets. Native hostile
-input requires a killable, memory-contained worker process with bounded concurrency
-and I/O. Browser and Node hostile input require replaceable Workers with deadlines,
+hard cancellation or internal allocation and diagnostic budgets. ADR 0014 governs
+native qualification across Linux, macOS, and Windows: each advertised target needs a
+real killable worker, a tested target-specific memory mechanism, bounded deadlines and
+fail-stop cleanup, host-wide bounded concurrency and queueing, bounded
+request/response transfer, orphan prevention, and no in-process fallback.
+Evidence-harness values are not product defaults. Browser and
+Node hostile input require separately qualified replaceable Workers with deadlines,
 bounded concurrency, and bounded request/response transfer. In-process parsing may
 not be presented as resource-bounded.
