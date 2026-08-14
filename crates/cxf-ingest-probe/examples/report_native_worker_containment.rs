@@ -443,9 +443,15 @@ mod enabled {
             .map_err(|error| format!("failed to locate worker executable: {error}"))?;
         #[cfg(target_os = "macos")]
         let (macos_product_version, macos_build_version, darwin_release) = (
-            Some(system_command_output("sw_vers", &["-productVersion"])?),
-            Some(system_command_output("sw_vers", &["-buildVersion"])?),
-            Some(system_command_output("uname", &["-r"])?),
+            Some(system_command_output(
+                "/usr/bin/sw_vers",
+                &["-productVersion"],
+            )?),
+            Some(system_command_output(
+                "/usr/bin/sw_vers",
+                &["-buildVersion"],
+            )?),
+            Some(system_command_output("/usr/bin/uname", &["-r"])?),
         );
         #[cfg(target_os = "linux")]
         let (macos_product_version, macos_build_version, darwin_release) = (None, None, None);

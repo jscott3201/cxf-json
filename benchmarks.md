@@ -282,6 +282,14 @@ The report registers `EVFILT_PROC` before killing the controller and observes
 `NOTE_EXIT` for the worker after each controller death. This tests one direct worker
 only. It does not establish descendant containment or a sandbox.
 
+A clean release run at revision `1c8a2daccb185a506e7033a3246e3a87f94e5320`
+on the primary arm64 development machine recorded macOS 26.6 build 25G70, Darwin
+25.6.0, and 16 GiB of physical memory. The first accepted finite `RLIMIT_AS` candidate
+was 512 GiB; a 1 TiB `PROT_NONE` mapping was denied. The 32,768-value semantic case,
+deadline cleanup, response overflow and recovery, and all three controller-death cases
+passed. This result leaves macOS memory qualification blocked because the observed
+finite limit is 32 times physical memory.
+
 `RLIMIT_AS` bounds virtual address space, not RSS. The constants belong to the
 evidence harness; they are not parser options, package defaults, or release
 thresholds. D-029 remains open because no supported native host boundary, hard macOS
