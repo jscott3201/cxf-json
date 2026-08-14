@@ -60,10 +60,11 @@ Those bounds do not transfer to end users.
 ## Specification and compatibility
 
 [`../spec/PROFILE.md`](../spec/PROFILE.md) is the only normative behavior
-contract. Version 0.1.3 adds RDF output options to the earlier source, document
-IRI, JSON-structure, diagnostics, and admission foundations. A change to public
-contract behavior must update the profile version, enforce tests, and add or
-supersede one ADR in [`../spec/adr/`](../spec/adr/).
+contract. Version 0.1.8 covers the source, document IRI, JSON-structure,
+diagnostic, admission, and RDF-output foundations plus the private projection,
+validation, and namespace policy. No supported public parser exists. A change
+to public contract behavior must update the profile version, enforce tests, and
+add or supersede one ADR in [`../spec/adr/`](../spec/adr/).
 
 - **Breaking pre-1.0:** increment the profile minor version and reset the patch
   version to zero.

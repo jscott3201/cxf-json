@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "observations": [
+    {
+      "id": "modelica-json-v1.2.0",
+      "producer_repository": "https://github.com/lbl-srg/modelica-json",
+      "producer_commit": "ad84dbf479df8e7fd35708e7a15e3a0c45e41662",
+      "producer_release": "v1.2.0",
+      "dialect": {
+        "namespace_iri": "https://data.ashrae.org/S231P#",
+        "connection_predicate": "https://data.ashrae.org/S231P#isConnectedTo"
+      },
+      "evidence": {
+        "class": "producer-source",
+        "url": "https://raw.githubusercontent.com/lbl-srg/modelica-json/ad84dbf479df8e7fd35708e7a15e3a0c45e41662/lib/cxfExtractor.js"
+      },
+      "witnesses": {
+        "namespace_iri": "crates/cxf-json/tests/projection/cxf-proj-legacy-https.jsonld",
+        "connection_predicate": "crates/cxf-json/tests/projection/cxf-proj-legacy-https.jsonld"
+      }
+    },
+    {
+      "id": "modelica-json-v1.3.0",
+      "producer_repository": "https://github.com/lbl-srg/modelica-json",
+      "producer_commit": "c4aa402528187446a6a49e8639fb4b760981c9fb",
+      "producer_release": "v1.3.0",
+      "dialect": {
+        "namespace_iri": "https://data.ashrae.org/S231P#",
+        "connection_predicate": "https://data.ashrae.org/S231P#isConnectedTo"
+      },
+      "evidence": {
+        "class": "producer-source",
+        "url": "https://raw.githubusercontent.com/lbl-srg/modelica-json/c4aa402528187446a6a49e8639fb4b760981c9fb/lib/cxfExtractor.js"
+      },
+      "witnesses": {
+        "namespace_iri": "crates/cxf-json/tests/projection/cxf-proj-legacy-https.jsonld",
+        "connection_predicate": "crates/cxf-json/tests/projection/cxf-proj-legacy-https.jsonld"
+      }
+    },
+    {
+      "id": "modelica-json-http-s231p-transition",
+      "producer_repository": "https://github.com/lbl-srg/modelica-json",
+      "producer_commit": "54777488ad08251d24f65d1ab2afc44b773200a5",
+      "producer_release": null,
+      "dialect": {
+        "namespace_iri": "http://data.ashrae.org/S231P#",
+        "connection_predicate": "http://data.ashrae.org/S231P#isConnectedTo"
+      },
+      "evidence": {
+        "class": "producer-source",
+        "url": "https://raw.githubusercontent.com/lbl-srg/modelica-json/54777488ad08251d24f65d1ab2afc44b773200a5/lib/cxfExtractor.js"
+      },
+      "witnesses": {
+        "namespace_iri": "crates/cxf-json/tests/projection/cxf-proj-emitter.jsonld",
+        "connection_predicate": "crates/cxf-json/tests/projection/cxf-proj-emitter.jsonld"
+      }
+    },
+    {
+      "id": "modelica-json-pinned-operator-corpus",
+      "producer_repository": "https://github.com/lbl-srg/modelica-json",
+      "producer_commit": "85721b828a6ff8d9d3c1a48ff9a59808d2fa31fb",
+      "producer_release": null,
+      "dialect": {
+        "namespace_iri": "http://data.ashrae.org/S231#",
+        "connection_predicate": "http://data.ashrae.org/S231#isConnectedTo",
+        "unit_predicates": [
+          "http://qudt.org/schema/qudt#hasUnit",
+          "http://qudt.org/schema/qudt#hasQuantityKind"
+        ]
+      },
+      "evidence": {
+        "class": "operator-git-corpus",
+        "url": "https://github.com/jscott3201/open-control-engine/blob/8fbec096a682b3ff930dcdaa89c6f0a83bf8cd67/third_party/modelica-buildings-cdl/README.md"
+      },
+      "witnesses": {
+        "namespace_iri": "crates/cxf-json/tests/projection/cxf-proj-specform.jsonld",
+        "connection_predicate": "crates/cxf-json/tests/w016/cxf-w016-validation.jsonld",
+        "unit_predicates": "crates/cxf-json/tests/projection/cxf-proj-units.jsonld"
+      }
+    }
+  ]
+}

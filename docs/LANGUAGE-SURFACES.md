@@ -74,7 +74,7 @@ CXF values once those values exist.
 | Browser JavaScript | none | None |
 | Node.js | none | None |
 | Internal WASM probes | instrumentation only | None |
-| `spec/PROFILE.md` 0.1.7 | normative project contract | Versioned project surface before package publication |
+| `spec/PROFILE.md` 0.1.8 | normative project contract | Versioned project surface before package publication |
 
 When a supported binding ships, its documentation must name the Rust profile
 version, package version, host/runtime support, and resource policy separately.
