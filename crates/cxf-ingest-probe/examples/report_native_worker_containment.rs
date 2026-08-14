@@ -1,4 +1,7 @@
-#[cfg(all(cxf_json_semantic_harness, target_os = "linux"))]
+#[cfg(all(
+    cxf_json_semantic_harness,
+    any(target_os = "linux", target_os = "macos")
+))]
 mod enabled {
     use std::{
         env,
@@ -9,6 +12,14 @@ mod enabled {
         thread::{self, JoinHandle},
         time::{Duration, Instant},
     };
+    #[cfg(target_os = "macos")]
+    use std::{
+        fs::File,
+        os::{
+            fd::{AsRawFd, FromRawFd, RawFd},
+            unix::process::CommandExt,
+        },
+    };
 
     use cxf_ingest_probe::production_harness::{
         Metrics, Observation, OutcomeKind, VERIFIED_REVISION, observe, options,
@@ -17,8 +28,9 @@ mod enabled {
     use serde::{Deserialize, Serialize};
     use sha2::{Digest, Sha256};
 
-    const PROTOCOL_VERSION: u64 = 1;
-    const ADDRESS_SPACE_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
+    const PROTOCOL_VERSION: u64 = 2;
+    #[cfg(target_os = "linux")]
+    const LINUX_ADDRESS_SPACE_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
     const REQUEST_LIMIT_BYTES: usize = 1024 * 1024;
     const RESPONSE_LIMIT_BYTES: usize = 4 * 1024;
     const DEADLINE: Duration = Duration::from_secs(1);
@@ -26,12 +38,41 @@ mod enabled {
     const MAX_CONCURRENCY: u64 = 1;
     const OVERSIZED_RESPONSE_ATTEMPT_BYTES: usize = 1024 * 1024;
 
+    #[cfg(target_os = "macos")]
+    const MACOS_ADDRESS_SPACE_CANDIDATES: [u64; 10] = [
+        256 * 1024 * 1024,
+        1024 * 1024 * 1024,
+        4 * 1024 * 1024 * 1024,
+        16 * 1024 * 1024 * 1024,
+        64 * 1024 * 1024 * 1024,
+        128 * 1024 * 1024 * 1024,
+        256 * 1024 * 1024 * 1024,
+        512 * 1024 * 1024 * 1024,
+        1024 * 1024 * 1024 * 1024,
+        2 * 1024 * 1024 * 1024 * 1024,
+    ];
+
     type IoThread<T> = JoinHandle<io::Result<T>>;
+
+    struct RequestWriter {
+        handle: IoThread<()>,
+        release: mpsc::SyncSender<()>,
+    }
 
     const SEMANTIC_WORKER_ARG: &str = "--worker";
     const DELAY_WORKER_ARG: &str = "--worker-delay";
     const MEMORY_WORKER_ARG: &str = "--worker-memory-probe";
     const OVERSIZED_RESPONSE_WORKER_ARG: &str = "--worker-oversized-response";
+    #[cfg(target_os = "macos")]
+    const PARENT_LIVENESS_EXECUTION_WORKER_ARG: &str = "--worker-parent-liveness-execution";
+    #[cfg(target_os = "macos")]
+    const PARENT_LIVENESS_RESPONSE_WORKER_ARG: &str = "--worker-parent-liveness-response";
+    #[cfg(target_os = "macos")]
+    const PARENT_LIVENESS_STARTUP_CONTROLLER_ARG: &str = "--parent-liveness-startup";
+    #[cfg(target_os = "macos")]
+    const PARENT_LIVENESS_EXECUTION_CONTROLLER_ARG: &str = "--parent-liveness-execution";
+    #[cfg(target_os = "macos")]
+    const PARENT_LIVENESS_RESPONSE_CONTROLLER_ARG: &str = "--parent-liveness-response";
 
     #[derive(Clone, Copy)]
     enum WorkerMode {
@@ -39,6 +80,10 @@ mod enabled {
         Delay,
         MemoryProbe,
         OversizedResponse,
+        #[cfg(target_os = "macos")]
+        ParentLivenessExecution,
+        #[cfg(target_os = "macos")]
+        ParentLivenessResponse,
     }
 
     impl WorkerMode {
@@ -48,6 +93,195 @@ mod enabled {
                 Self::Delay => DELAY_WORKER_ARG,
                 Self::MemoryProbe => MEMORY_WORKER_ARG,
                 Self::OversizedResponse => OVERSIZED_RESPONSE_WORKER_ARG,
+                #[cfg(target_os = "macos")]
+                Self::ParentLivenessExecution => PARENT_LIVENESS_EXECUTION_WORKER_ARG,
+                #[cfg(target_os = "macos")]
+                Self::ParentLivenessResponse => PARENT_LIVENESS_RESPONSE_WORKER_ARG,
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[derive(Clone, Copy)]
+    enum ParentLivenessStage {
+        Startup,
+        Execution,
+        Response,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl ParentLivenessStage {
+        const fn controller_argument(self) -> &'static str {
+            match self {
+                Self::Startup => PARENT_LIVENESS_STARTUP_CONTROLLER_ARG,
+                Self::Execution => PARENT_LIVENESS_EXECUTION_CONTROLLER_ARG,
+                Self::Response => PARENT_LIVENESS_RESPONSE_CONTROLLER_ARG,
+            }
+        }
+
+        const fn name(self) -> &'static str {
+            match self {
+                Self::Startup => "startup",
+                Self::Execution => "execution",
+                Self::Response => "response",
+            }
+        }
+
+        const fn evidence_point(self) -> &'static str {
+            match self {
+                Self::Startup => "request_header_pending",
+                Self::Execution => "controlled_execution_entered",
+                Self::Response => "response_write_started",
+            }
+        }
+
+        const fn expected_exit_code(self) -> i32 {
+            match self {
+                Self::Startup => 1,
+                Self::Execution | Self::Response => 86,
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[derive(Deserialize, Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct ParentLivenessReady {
+        worker_pid: u32,
+        worker_parent_pid: u32,
+        worker_start_seconds: u64,
+        worker_start_microseconds: u64,
+        stage: String,
+        evidence_point: String,
+    }
+
+    #[cfg(target_os = "macos")]
+    #[derive(Clone, Copy, Eq, PartialEq)]
+    struct ProcessIdentity {
+        pid: u32,
+        parent_pid: u32,
+        start_seconds: u64,
+        start_microseconds: u64,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl ParentLivenessReady {
+        fn new(stage: ParentLivenessStage, identity: ProcessIdentity) -> Self {
+            Self {
+                worker_pid: identity.pid,
+                worker_parent_pid: identity.parent_pid,
+                worker_start_seconds: identity.start_seconds,
+                worker_start_microseconds: identity.start_microseconds,
+                stage: stage.name().to_owned(),
+                evidence_point: stage.evidence_point().to_owned(),
+            }
+        }
+
+        const fn identity(&self) -> ProcessIdentity {
+            ProcessIdentity {
+                pid: self.worker_pid,
+                parent_pid: self.worker_parent_pid,
+                start_seconds: self.worker_start_seconds,
+                start_microseconds: self.worker_start_microseconds,
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    struct ProcessExitWatcher {
+        queue: libc::c_int,
+        pid: u32,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl ProcessExitWatcher {
+        fn register(pid: u32) -> io::Result<Self> {
+            let queue = unsafe { libc::kqueue() };
+            if queue == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            let watcher = Self { queue, pid };
+            let change = libc::kevent {
+                ident: pid as libc::uintptr_t,
+                filter: libc::EVFILT_PROC,
+                flags: libc::EV_ADD | libc::EV_ONESHOT | libc::EV_RECEIPT,
+                fflags: libc::NOTE_EXIT,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            };
+            let mut receipt = libc::kevent {
+                ident: 0,
+                filter: 0,
+                flags: 0,
+                fflags: 0,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            };
+            let timeout = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            let received = unsafe {
+                libc::kevent(
+                    queue,
+                    &raw const change,
+                    1,
+                    &raw mut receipt,
+                    1,
+                    &raw const timeout,
+                )
+            };
+            if received != 1 || receipt.flags & libc::EV_ERROR == 0 || receipt.data != 0 {
+                return Err(if received == -1 {
+                    io::Error::last_os_error()
+                } else {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "macOS process-exit watch registration failed",
+                    )
+                });
+            }
+            Ok(watcher)
+        }
+
+        fn wait(self) -> io::Result<bool> {
+            let mut event = libc::kevent {
+                ident: 0,
+                filter: 0,
+                flags: 0,
+                fflags: 0,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            };
+            let timeout = libc::timespec {
+                tv_sec: (DEADLINE + Duration::from_secs(1)).as_secs() as libc::time_t,
+                tv_nsec: 0,
+            };
+            let received = unsafe {
+                libc::kevent(
+                    self.queue,
+                    std::ptr::null(),
+                    0,
+                    &raw mut event,
+                    1,
+                    &raw const timeout,
+                )
+            };
+            if received == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(received == 1
+                && event.ident == self.pid as libc::uintptr_t
+                && event.filter == libc::EVFILT_PROC
+                && event.fflags & libc::NOTE_EXIT != 0)
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for ProcessExitWatcher {
+        fn drop(&mut self) {
+            unsafe {
+                libc::close(self.queue);
             }
         }
     }
@@ -80,7 +314,9 @@ mod enabled {
     #[serde(deny_unknown_fields)]
     struct WorkerResponse {
         protocol_version: u64,
-        address_space_limit_bytes: u64,
+        memory_limit_kind: String,
+        memory_limit_bytes: Option<u64>,
+        memory_probe_limit_bytes: Option<u64>,
         outcome: String,
         source_matches_input: Option<bool>,
         returned_rdf_quads: u64,
@@ -91,7 +327,9 @@ mod enabled {
         fn observation(observation: Observation) -> Self {
             Self {
                 protocol_version: PROTOCOL_VERSION,
-                address_space_limit_bytes: ADDRESS_SPACE_LIMIT_BYTES,
+                memory_limit_kind: memory_limit_kind().to_owned(),
+                memory_limit_bytes: memory_limit_bytes(),
+                memory_probe_limit_bytes: None,
                 outcome: outcome_name(observation.outcome).to_owned(),
                 source_matches_input: observation.source_matches_input,
                 returned_rdf_quads: observation.returned_rdf_quads,
@@ -102,12 +340,21 @@ mod enabled {
         fn control(outcome: &str) -> Self {
             Self {
                 protocol_version: PROTOCOL_VERSION,
-                address_space_limit_bytes: ADDRESS_SPACE_LIMIT_BYTES,
+                memory_limit_kind: memory_limit_kind().to_owned(),
+                memory_limit_bytes: memory_limit_bytes(),
+                memory_probe_limit_bytes: None,
                 outcome: outcome.to_owned(),
                 source_matches_input: None,
                 returned_rdf_quads: 0,
                 metrics: None,
             }
+        }
+
+        #[cfg(target_os = "macos")]
+        fn memory_probe(outcome: &str, limit_bytes: Option<u64>) -> Self {
+            let mut response = Self::control(outcome);
+            response.memory_probe_limit_bytes = limit_bytes;
+            response
         }
     }
 
@@ -143,9 +390,18 @@ mod enabled {
     struct Report {
         instrumentation_revision: &'static str,
         platform: &'static str,
+        architecture: &'static str,
+        macos_product_version: Option<String>,
+        macos_build_version: Option<String>,
+        darwin_release: Option<String>,
         protocol_version: u64,
-        address_space_limit_bytes: u64,
+        memory_limit_kind: &'static str,
+        memory_limit_bytes: Option<u64>,
+        host_physical_memory_bytes: Option<u64>,
+        memory_probe_limit_bytes: Option<u64>,
+        memory_qualification_status: &'static str,
         deadline_millis: u128,
+        deadline_observation: &'static str,
         request_limit_bytes: usize,
         response_limit_bytes: usize,
         max_concurrency: u64,
@@ -172,6 +428,10 @@ mod enabled {
         oversized_response_reaped: bool,
         post_overflow_outcome: String,
         post_overflow_response_bytes: usize,
+        parent_liveness_mechanism: &'static str,
+        parent_liveness_startup_outcome: &'static str,
+        parent_liveness_execution_outcome: &'static str,
+        parent_liveness_response_outcome: &'static str,
         oversized_request_outcome: &'static str,
         oversized_request_observed_bytes: usize,
         unexpected_outcomes: u64,
@@ -179,12 +439,50 @@ mod enabled {
 
     pub fn main() -> ExitCode {
         let mut arguments = env::args().skip(1);
-        let mode = match arguments.next().as_deref() {
+        let argument = arguments.next();
+        #[cfg(target_os = "macos")]
+        if let Some(stage) = match argument.as_deref() {
+            Some(PARENT_LIVENESS_STARTUP_CONTROLLER_ARG) => Some(ParentLivenessStage::Startup),
+            Some(PARENT_LIVENESS_EXECUTION_CONTROLLER_ARG) => Some(ParentLivenessStage::Execution),
+            Some(PARENT_LIVENESS_RESPONSE_CONTROLLER_ARG) => Some(ParentLivenessStage::Response),
+            _ => None,
+        } {
+            let Some(request_fd) = arguments
+                .next()
+                .and_then(|value| value.parse::<RawFd>().ok())
+            else {
+                eprintln!("parent-liveness controller requires a request descriptor");
+                return ExitCode::FAILURE;
+            };
+            let Some(response_fd) = arguments
+                .next()
+                .and_then(|value| value.parse::<RawFd>().ok())
+            else {
+                eprintln!("parent-liveness controller requires a response descriptor");
+                return ExitCode::FAILURE;
+            };
+            let Some(worker_pid) = arguments.next().and_then(|value| value.parse::<u32>().ok())
+            else {
+                eprintln!("parent-liveness controller requires a worker PID");
+                return ExitCode::FAILURE;
+            };
+            if arguments.next().is_some() {
+                eprintln!("parent-liveness controller received extra arguments");
+                return ExitCode::FAILURE;
+            }
+            return parent_liveness_controller(stage, request_fd, response_fd, worker_pid);
+        }
+
+        let mode = match argument.as_deref() {
             None => return parent_main(),
             Some(SEMANTIC_WORKER_ARG) => WorkerMode::Semantic,
             Some(DELAY_WORKER_ARG) => WorkerMode::Delay,
             Some(MEMORY_WORKER_ARG) => WorkerMode::MemoryProbe,
             Some(OVERSIZED_RESPONSE_WORKER_ARG) => WorkerMode::OversizedResponse,
+            #[cfg(target_os = "macos")]
+            Some(PARENT_LIVENESS_EXECUTION_WORKER_ARG) => WorkerMode::ParentLivenessExecution,
+            #[cfg(target_os = "macos")]
+            Some(PARENT_LIVENESS_RESPONSE_WORKER_ARG) => WorkerMode::ParentLivenessResponse,
             Some(_) => {
                 eprintln!("invalid worker mode");
                 return ExitCode::FAILURE;
@@ -224,6 +522,20 @@ mod enabled {
     fn report() -> Result<Report, String> {
         let executable = env::current_exe()
             .map_err(|error| format!("failed to locate worker executable: {error}"))?;
+        #[cfg(target_os = "macos")]
+        let (macos_product_version, macos_build_version, darwin_release) = (
+            Some(system_command_output(
+                "/usr/bin/sw_vers",
+                &["-productVersion"],
+            )?),
+            Some(system_command_output(
+                "/usr/bin/sw_vers",
+                &["-buildVersion"],
+            )?),
+            Some(system_command_output("/usr/bin/uname", &["-r"])?),
+        );
+        #[cfg(target_os = "linux")]
+        let (macos_product_version, macos_build_version, darwin_release) = (None, None, None);
 
         let semantic_input = retained_values_input(32_768);
         let semantic = completed(run_worker(
@@ -266,12 +578,39 @@ mod enabled {
         }
 
         let memory = completed(run_worker(&executable, b"", WorkerMode::MemoryProbe))?;
-        if memory.response != WorkerResponse::control("memory_allocation_denied") {
-            return Err(format!(
-                "worker address-space probe had an unexpected result: {:?}",
-                memory.response
-            ));
-        }
+        #[cfg(target_os = "linux")]
+        let (host_physical_memory_bytes, memory_probe_limit_bytes, memory_qualification_status) = {
+            if memory.response != WorkerResponse::control("memory_allocation_denied") {
+                return Err(format!(
+                    "worker address-space probe had an unexpected result: {:?}",
+                    memory.response
+                ));
+            }
+            (None, None, "evidence_only_not_qualified")
+        };
+        #[cfg(target_os = "macos")]
+        let (host_physical_memory_bytes, memory_probe_limit_bytes, memory_qualification_status) = {
+            let physical_memory = physical_memory_bytes()
+                .map_err(|error| format!("failed to read macOS physical memory: {error}"))?;
+            let probe_limit = memory.response.memory_probe_limit_bytes;
+            let status = match memory.response.outcome.as_str() {
+                "rlimit_as_mapping_denied"
+                    if probe_limit.is_some_and(|limit| limit > physical_memory) =>
+                {
+                    "blocked_minimum_limit_exceeds_physical_memory"
+                }
+                "rlimit_as_mapping_denied" => "candidate_requires_product_measurement",
+                "rlimit_as_unavailable" => "blocked_rlimit_as_unavailable",
+                "rlimit_as_mapping_allowed" => "blocked_rlimit_as_not_enforced",
+                _ => {
+                    return Err(format!(
+                        "worker address-space probe had an unexpected result: {:?}",
+                        memory.response
+                    ));
+                }
+            };
+            (Some(physical_memory), probe_limit, status)
+        };
 
         let (deadline_kill_sent, deadline_reaped, deadline_response_bytes) =
             match run_worker(&executable, b"null", WorkerMode::Delay) {
@@ -316,6 +655,23 @@ mod enabled {
             ));
         }
 
+        #[cfg(target_os = "macos")]
+        let (
+            parent_liveness_startup_outcome,
+            parent_liveness_execution_outcome,
+            parent_liveness_response_outcome,
+        ) = (
+            run_parent_liveness_probe(&executable, ParentLivenessStage::Startup)?,
+            run_parent_liveness_probe(&executable, ParentLivenessStage::Execution)?,
+            run_parent_liveness_probe(&executable, ParentLivenessStage::Response)?,
+        );
+        #[cfg(target_os = "linux")]
+        let (
+            parent_liveness_startup_outcome,
+            parent_liveness_execution_outcome,
+            parent_liveness_response_outcome,
+        ) = ("not_evaluated", "not_evaluated", "not_evaluated");
+
         let oversized_request = vec![0; REQUEST_LIMIT_BYTES + 1];
         let oversized_request_observed_bytes = match run_worker(
             Path::new("/worker-must-not-be-spawned"),
@@ -334,10 +690,19 @@ mod enabled {
 
         Ok(Report {
             instrumentation_revision: VERIFIED_REVISION,
-            platform: "linux",
+            platform: platform(),
+            architecture: env::consts::ARCH,
+            macos_product_version,
+            macos_build_version,
+            darwin_release,
             protocol_version: PROTOCOL_VERSION,
-            address_space_limit_bytes: ADDRESS_SPACE_LIMIT_BYTES,
+            memory_limit_kind: memory_limit_kind(),
+            memory_limit_bytes: memory_limit_bytes(),
+            host_physical_memory_bytes,
+            memory_probe_limit_bytes,
+            memory_qualification_status,
             deadline_millis: DEADLINE.as_millis(),
+            deadline_observation: "parent_monotonic_through_response_validation",
             request_limit_bytes: REQUEST_LIMIT_BYTES,
             response_limit_bytes: RESPONSE_LIMIT_BYTES,
             max_concurrency: MAX_CONCURRENCY,
@@ -364,24 +729,361 @@ mod enabled {
             oversized_response_reaped,
             post_overflow_outcome: post_overflow.response.outcome,
             post_overflow_response_bytes: post_overflow.response_bytes,
+            parent_liveness_mechanism: parent_liveness_mechanism(),
+            parent_liveness_startup_outcome,
+            parent_liveness_execution_outcome,
+            parent_liveness_response_outcome,
             oversized_request_outcome: "request_limit",
             oversized_request_observed_bytes,
             unexpected_outcomes: 0,
         })
     }
 
+    #[cfg(target_os = "macos")]
+    fn run_parent_liveness_probe(
+        executable: &Path,
+        stage: ParentLivenessStage,
+    ) -> Result<&'static str, String> {
+        let (request_reader, request_writer) = cloexec_pipe()
+            .map_err(|error| format!("failed to create liveness request pipe: {error}"))?;
+        let (response_reader, response_writer) = cloexec_pipe()
+            .map_err(|error| format!("failed to create liveness response pipe: {error}"))?;
+        let worker_mode = match stage {
+            ParentLivenessStage::Startup => WorkerMode::Delay,
+            ParentLivenessStage::Execution => WorkerMode::ParentLivenessExecution,
+            ParentLivenessStage::Response => WorkerMode::ParentLivenessResponse,
+        };
+        let mut worker = Command::new(executable)
+            .arg(worker_mode.argument())
+            .stdin(Stdio::from(request_reader))
+            .stdout(Stdio::from(response_writer))
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("failed to spawn parent-liveness worker: {error}"))?;
+
+        let request_fd = request_writer.as_raw_fd();
+        let response_fd = response_reader.as_raw_fd();
+        let mut controller_command = Command::new(executable);
+        controller_command
+            .arg(stage.controller_argument())
+            .arg(request_fd.to_string())
+            .arg(response_fd.to_string())
+            .arg(worker.id().to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        unsafe {
+            controller_command.pre_exec(move || {
+                clear_close_on_exec(request_fd)?;
+                clear_close_on_exec(response_fd)
+            });
+        }
+        let mut controller = match controller_command.spawn() {
+            Ok(controller) => controller,
+            Err(error) => {
+                stop_child(&mut worker);
+                return Err(format!(
+                    "failed to spawn parent-liveness controller: {error}"
+                ));
+            }
+        };
+        drop(request_writer);
+        drop(response_reader);
+        let stdout = match controller.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                stop_child(&mut controller);
+                stop_child(&mut worker);
+                return Err("parent-liveness controller stdout was not captured".to_owned());
+            }
+        };
+        let reader = match thread::Builder::new()
+            .name("cxf-parent-liveness-ready".to_owned())
+            .spawn(move || read_parent_liveness_ready(stdout))
+        {
+            Ok(reader) => reader,
+            Err(error) => {
+                stop_child(&mut controller);
+                stop_child(&mut worker);
+                return Err(format!("failed to spawn parent-liveness reader: {error}"));
+            }
+        };
+
+        let started = Instant::now();
+        while !reader.is_finished() && started.elapsed() < DEADLINE {
+            thread::sleep(POLL_INTERVAL);
+        }
+        if !reader.is_finished() {
+            stop_child(&mut controller);
+            stop_child(&mut worker);
+            let _ = reader.join();
+            return Err(format!(
+                "parent-liveness {} controller did not become ready",
+                stage.name()
+            ));
+        }
+        let ready = match reader.join() {
+            Ok(Ok(ready)) => ready,
+            Ok(Err(error)) => {
+                stop_child(&mut controller);
+                stop_child(&mut worker);
+                return Err(format!(
+                    "parent-liveness controller response failed: {error}"
+                ));
+            }
+            Err(_) => {
+                stop_child(&mut controller);
+                stop_child(&mut worker);
+                return Err("parent-liveness reader panicked".to_owned());
+            }
+        };
+        let identity = ready.identity();
+        if ready.stage != stage.name()
+            || ready.evidence_point != stage.evidence_point()
+            || identity.pid == controller.id()
+            || identity.pid != worker.id()
+            || identity.parent_pid != std::process::id()
+            || process_identity(identity.pid).ok() != Some(identity)
+        {
+            stop_child(&mut controller);
+            stop_child(&mut worker);
+            return Err(format!(
+                "parent-liveness {} controller returned an invalid identity",
+                stage.name()
+            ));
+        }
+
+        let exit_watcher = ProcessExitWatcher::register(identity.pid).map_err(|error| {
+            stop_child(&mut controller);
+            stop_child(&mut worker);
+            format!(
+                "parent-liveness {} worker exit watch failed: {error}",
+                stage.name()
+            )
+        })?;
+        if process_identity(identity.pid).ok() != Some(identity)
+            || !matches!(worker.try_wait(), Ok(None))
+        {
+            stop_child(&mut controller);
+            stop_child(&mut worker);
+            return Err(format!(
+                "parent-liveness {} worker identity changed during registration",
+                stage.name()
+            ));
+        }
+
+        let (kill_sent, reaped) = terminate_child(&mut controller);
+        if !kill_sent || !reaped {
+            stop_child(&mut worker);
+            return Err(format!(
+                "parent-liveness {} controller was not killed and reaped",
+                stage.name()
+            ));
+        }
+        let worker_exited = match exit_watcher.wait() {
+            Ok(worker_exited) => worker_exited,
+            Err(error) => {
+                stop_child(&mut worker);
+                return Err(format!(
+                    "parent-liveness {} worker exit wait failed: {error}",
+                    stage.name()
+                ));
+            }
+        };
+        if !worker_exited {
+            stop_child(&mut worker);
+            return Err(format!(
+                "parent-liveness {} worker survived controller death",
+                stage.name()
+            ));
+        }
+        let status = match worker.wait() {
+            Ok(status) => status,
+            Err(error) => {
+                stop_child(&mut worker);
+                return Err(format!("parent-liveness worker reap failed: {error}"));
+            }
+        };
+        if status.code() != Some(stage.expected_exit_code()) {
+            return Err(format!(
+                "parent-liveness {} worker did not take the expected stdin-EOF exit path",
+                stage.name()
+            ));
+        }
+        Ok("worker_exited_after_controller_death")
+    }
+
+    #[cfg(target_os = "macos")]
+    fn cloexec_pipe() -> io::Result<(File, File)> {
+        let mut descriptors = [0; 2];
+        if unsafe { libc::pipe(descriptors.as_mut_ptr()) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        for descriptor in descriptors {
+            let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+            if flags == -1
+                || unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags | libc::FD_CLOEXEC) } == -1
+            {
+                let error = io::Error::last_os_error();
+                unsafe {
+                    libc::close(descriptors[0]);
+                    libc::close(descriptors[1]);
+                }
+                return Err(error);
+            }
+        }
+        Ok(unsafe {
+            (
+                File::from_raw_fd(descriptors[0]),
+                File::from_raw_fd(descriptors[1]),
+            )
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn clear_close_on_exec(descriptor: RawFd) -> io::Result<()> {
+        let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+        if flags == -1
+            || unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } == -1
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn process_identity(pid: u32) -> io::Result<ProcessIdentity> {
+        let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+        let size = std::mem::size_of::<libc::proc_bsdinfo>();
+        let read = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                info.as_mut_ptr().cast(),
+                size as libc::c_int,
+            )
+        };
+        if read != size as libc::c_int {
+            return Err(io::Error::last_os_error());
+        }
+        let info = unsafe { info.assume_init() };
+        Ok(ProcessIdentity {
+            pid: info.pbi_pid,
+            parent_pid: info.pbi_ppid,
+            start_seconds: info.pbi_start_tvsec,
+            start_microseconds: info.pbi_start_tvusec,
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn parent_liveness_controller(
+        stage: ParentLivenessStage,
+        request_fd: RawFd,
+        response_fd: RawFd,
+        worker_pid: u32,
+    ) -> ExitCode {
+        match parent_liveness_controller_result(stage, request_fd, response_fd, worker_pid) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn parent_liveness_controller_result(
+        stage: ParentLivenessStage,
+        request_fd: RawFd,
+        response_fd: RawFd,
+        worker_pid: u32,
+    ) -> Result<(), String> {
+        let mut request = unsafe { File::from_raw_fd(request_fd) };
+        let mut response = unsafe { File::from_raw_fd(response_fd) };
+        let ready = if matches!(stage, ParentLivenessStage::Startup) {
+            let identity = process_identity(worker_pid)
+                .map_err(|error| format!("failed to identify startup worker: {error}"))?;
+            ParentLivenessReady::new(stage, identity)
+        } else {
+            let input = if matches!(stage, ParentLivenessStage::Response) {
+                retained_values_input(1_024)
+            } else {
+                b"null".to_vec()
+            };
+            write_request(&mut request, &input)
+                .map_err(|error| format!("failed to write liveness request: {error}"))?;
+            let ready = read_parent_liveness_ready(&mut response)
+                .map_err(|error| format!("parent-liveness worker did not become ready: {error}"))?;
+            if matches!(stage, ParentLivenessStage::Response) {
+                let mut entered_response = vec![0; RESPONSE_LIMIT_BYTES];
+                response
+                    .read_exact(&mut entered_response)
+                    .map_err(|error| {
+                        format!("parent-liveness worker did not enter response write: {error}")
+                    })?;
+            }
+            ready
+        };
+
+        let mut output = io::stdout().lock();
+        if serde_json::to_writer(&mut output, &ready).is_err()
+            || output.write_all(b"\n").is_err()
+            || output.flush().is_err()
+        {
+            return Err("failed to report parent-liveness worker".to_owned());
+        }
+
+        thread::sleep(DEADLINE + Duration::from_secs(10));
+        Err("parent-liveness controller was not terminated by its owner".to_owned())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn read_parent_liveness_ready(mut input: impl Read) -> io::Result<ParentLivenessReady> {
+        let mut encoded = Vec::with_capacity(128);
+        while encoded.len() <= 256 {
+            let mut byte = [0];
+            if input.read(&mut byte)? == 0 {
+                break;
+            }
+            encoded.push(byte[0]);
+            if byte[0] == b'\n' {
+                return serde_json::from_slice(&encoded)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "parent-liveness response exceeded its limit or lacked a newline",
+        ))
+    }
+
     fn worker_main(mode: WorkerMode) -> ExitCode {
-        if set_address_space_limit().is_err() {
-            eprintln!("worker resource-limit setup failed");
+        #[cfg(target_os = "linux")]
+        if let Err(error) = set_address_space_limit() {
+            eprintln!("worker resource-limit setup failed: {error}");
             return ExitCode::FAILURE;
         }
-        let input = match read_request() {
-            Ok(input) => input,
+        let (input, request_stdin) = match read_request() {
+            Ok(request) => request,
             Err(_) => {
                 eprintln!("worker request rejected");
                 return ExitCode::FAILURE;
             }
         };
+        #[cfg(target_os = "macos")]
+        let _memory_probe_stdin = if matches!(mode, WorkerMode::MemoryProbe) {
+            Some(request_stdin)
+        } else {
+            if start_parent_liveness_watchdog(request_stdin).is_err() {
+                eprintln!("worker parent-liveness setup failed");
+                return ExitCode::FAILURE;
+            }
+            None
+        };
+        #[cfg(target_os = "linux")]
+        let _request_stdin = request_stdin;
 
         match mode {
             WorkerMode::Semantic => {
@@ -392,12 +1094,20 @@ mod enabled {
                 write_response(&WorkerResponse::control("delay_completed"))
             }
             WorkerMode::MemoryProbe => {
-                let outcome = if oversized_mapping_is_denied() {
+                #[cfg(target_os = "linux")]
+                let response = if oversized_mapping_is_denied(LINUX_ADDRESS_SPACE_LIMIT_BYTES) {
                     "memory_allocation_denied"
                 } else {
                     "memory_allocation_allowed"
                 };
-                write_response(&WorkerResponse::control(outcome))
+                #[cfg(target_os = "linux")]
+                let response = WorkerResponse::control(response);
+                #[cfg(target_os = "macos")]
+                let response = {
+                    let (outcome, limit_bytes) = macos_address_space_probe();
+                    WorkerResponse::memory_probe(outcome, limit_bytes)
+                };
+                write_response(&response)
             }
             WorkerMode::OversizedResponse => {
                 let output = vec![b'x'; OVERSIZED_RESPONSE_ATTEMPT_BYTES];
@@ -406,13 +1116,37 @@ mod enabled {
                 thread::sleep(DEADLINE + Duration::from_secs(1));
                 ExitCode::FAILURE
             }
+            #[cfg(target_os = "macos")]
+            WorkerMode::ParentLivenessExecution => {
+                if enter_controlled_execution().is_err() {
+                    return ExitCode::FAILURE;
+                }
+                if write_parent_liveness_ready(ParentLivenessStage::Execution).is_err() {
+                    return ExitCode::FAILURE;
+                }
+                thread::sleep(DEADLINE + Duration::from_secs(10));
+                ExitCode::FAILURE
+            }
+            #[cfg(target_os = "macos")]
+            WorkerMode::ParentLivenessResponse => {
+                let _ = observe(&input, &options());
+                if write_parent_liveness_ready(ParentLivenessStage::Response).is_err() {
+                    return ExitCode::FAILURE;
+                }
+                let output = vec![b'x'; OVERSIZED_RESPONSE_ATTEMPT_BYTES];
+                let mut stdout = io::stdout().lock();
+                while stdout.write_all(&output).is_ok() {}
+                thread::sleep(DEADLINE + Duration::from_secs(10));
+                ExitCode::FAILURE
+            }
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn set_address_space_limit() -> io::Result<()> {
         let limit = libc::rlimit {
-            rlim_cur: ADDRESS_SPACE_LIMIT_BYTES as libc::rlim_t,
-            rlim_max: ADDRESS_SPACE_LIMIT_BYTES as libc::rlim_t,
+            rlim_cur: LINUX_ADDRESS_SPACE_LIMIT_BYTES as libc::rlim_t,
+            rlim_max: LINUX_ADDRESS_SPACE_LIMIT_BYTES as libc::rlim_t,
         };
         // The worker sets the limit before reading input or entering the backend.
         let result = unsafe { libc::setrlimit(libc::RLIMIT_AS, &limit) };
@@ -423,9 +1157,23 @@ mod enabled {
         }
     }
 
-    fn oversized_mapping_is_denied() -> bool {
-        let requested = usize::try_from(ADDRESS_SPACE_LIMIT_BYTES * 2)
-            .expect("the Linux evidence target must represent a 512 MiB mapping");
+    #[cfg(target_os = "macos")]
+    fn set_address_space_limit_bytes(limit_bytes: u64) -> io::Result<()> {
+        let limit = libc::rlimit {
+            rlim_cur: limit_bytes as libc::rlim_t,
+            rlim_max: limit_bytes as libc::rlim_t,
+        };
+        let result = unsafe { libc::setrlimit(libc::RLIMIT_AS, &limit) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    fn oversized_mapping_is_denied(limit_bytes: u64) -> bool {
+        let requested = usize::try_from(limit_bytes.saturating_mul(2))
+            .expect("the native evidence target must represent the probe mapping");
         // PROT_NONE reserves address space without committing or touching pages.
         let mapping = unsafe {
             libc::mmap(
@@ -448,19 +1196,82 @@ mod enabled {
         }
     }
 
-    fn read_request() -> io::Result<Vec<u8>> {
-        let mut input = Vec::with_capacity(REQUEST_LIMIT_BYTES.min(64 * 1024));
-        io::stdin()
-            .lock()
-            .take((REQUEST_LIMIT_BYTES + 1) as u64)
-            .read_to_end(&mut input)?;
-        if input.len() > REQUEST_LIMIT_BYTES {
+    #[cfg(target_os = "macos")]
+    fn macos_address_space_probe() -> (&'static str, Option<u64>) {
+        let Some(limit_bytes) = MACOS_ADDRESS_SPACE_CANDIDATES
+            .into_iter()
+            .find(|limit| set_address_space_limit_bytes(*limit).is_ok())
+        else {
+            return ("rlimit_as_unavailable", None);
+        };
+        let outcome = if oversized_mapping_is_denied(limit_bytes) {
+            "rlimit_as_mapping_denied"
+        } else {
+            "rlimit_as_mapping_allowed"
+        };
+        (outcome, Some(limit_bytes))
+    }
+
+    fn read_request() -> io::Result<(Vec<u8>, io::Stdin)> {
+        let mut stdin = io::stdin();
+        let mut encoded_length = [0; 8];
+        stdin.read_exact(&mut encoded_length)?;
+        let length = usize::try_from(u64::from_be_bytes(encoded_length)).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "worker request length overflow")
+        })?;
+        if length > REQUEST_LIMIT_BYTES {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "worker request limit exceeded",
             ));
         }
-        Ok(input)
+        let mut input = vec![0; length];
+        stdin.read_exact(&mut input)?;
+        Ok((input, stdin))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn start_parent_liveness_watchdog(mut stdin: io::Stdin) -> io::Result<()> {
+        thread::Builder::new()
+            .name("cxf-worker-parent-liveness".to_owned())
+            .spawn(move || {
+                let mut unexpected = [0];
+                let _ = stdin.read(&mut unexpected);
+                unsafe { libc::_exit(86) }
+            })?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn enter_controlled_execution() -> io::Result<()> {
+        let (entered_sender, entered_receiver) = mpsc::sync_channel(0);
+        thread::Builder::new()
+            .name("cxf-worker-controlled-execution".to_owned())
+            .spawn(move || {
+                if entered_sender.send(()).is_err() {
+                    return;
+                }
+                loop {
+                    thread::sleep(Duration::from_secs(1));
+                }
+            })?;
+        entered_receiver.recv().map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("controlled execution did not start: {error}"),
+            )
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn write_parent_liveness_ready(stage: ParentLivenessStage) -> io::Result<()> {
+        let identity = process_identity(std::process::id())?;
+        let ready = ParentLivenessReady::new(stage, identity);
+        let mut stdout = io::stdout().lock();
+        serde_json::to_writer(&mut stdout, &ready)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        stdout.write_all(b"\n")?;
+        stdout.flush()
     }
 
     fn write_response(response: &WorkerResponse) -> ExitCode {
@@ -552,7 +1363,7 @@ mod enabled {
             match child.try_wait() {
                 Ok(Some(status)) if started.elapsed() < DEADLINE => break status,
                 Ok(Some(_)) => {
-                    let _ = join_io(writer);
+                    let _ = finish_writer(writer);
                     return Err(deadline_or_response_limit(false, true, join_io(reader)));
                 }
                 Ok(None) => {
@@ -562,14 +1373,14 @@ mod enabled {
                 Err(error) => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    let _ = join_io(writer);
+                    let _ = finish_writer(writer);
                     let _ = join_io(reader);
                     return Err(ParentFailure::Io(error.to_string()));
                 }
             }
         };
 
-        let write_result = join_io(writer);
+        let write_result = finish_writer(writer);
         let response_bytes = join_io(reader)?;
         if response_bytes.len() > RESPONSE_LIMIT_BYTES {
             return Err(ParentFailure::ResponseLimit {
@@ -578,10 +1389,25 @@ mod enabled {
                 reaped: true,
             });
         }
+        if started.elapsed() >= DEADLINE {
+            return Err(ParentFailure::DeadlineExceeded {
+                kill_sent: false,
+                reaped: true,
+                response_bytes: response_bytes.len(),
+            });
+        }
         if !status.success() || write_result.is_err() {
             return Err(worker_failed(status));
         }
-        let response = decode_response(&response_bytes)?;
+        let response = decode_response(&response_bytes);
+        if started.elapsed() >= DEADLINE {
+            return Err(ParentFailure::DeadlineExceeded {
+                kill_sent: false,
+                reaped: true,
+                response_bytes: response_bytes.len(),
+            });
+        }
+        let response = response?;
         Ok(CompletedWorker {
             response,
             response_bytes: response_bytes.len(),
@@ -590,11 +1416,11 @@ mod enabled {
 
     fn expire_child(
         child: &mut Child,
-        writer: IoThread<()>,
+        writer: RequestWriter,
         reader: IoThread<Vec<u8>>,
     ) -> ParentFailure {
         let (kill_sent, reaped) = terminate_child(child);
-        let _ = join_io(writer);
+        let _ = finish_writer(writer);
         deadline_or_response_limit(kill_sent, reaped, join_io(reader))
     }
 
@@ -621,12 +1447,12 @@ mod enabled {
 
     fn reject_oversized_response(
         child: &mut Child,
-        writer: IoThread<()>,
+        writer: RequestWriter,
         reader: IoThread<Vec<u8>>,
         observed_bytes: usize,
     ) -> ParentFailure {
         let (kill_sent, reaped) = terminate_child(child);
-        let _ = join_io(writer);
+        let _ = finish_writer(writer);
         let _ = join_io(reader);
         ParentFailure::ResponseLimit {
             observed_bytes,
@@ -650,14 +1476,28 @@ mod enabled {
         let _ = child.wait();
     }
 
-    fn spawn_writer(stdin: ChildStdin, input: Vec<u8>) -> io::Result<IoThread<()>> {
-        thread::Builder::new()
+    fn spawn_writer(stdin: ChildStdin, input: Vec<u8>) -> io::Result<RequestWriter> {
+        let (release, wait_for_release) = mpsc::sync_channel(0);
+        let handle = thread::Builder::new()
             .name("cxf-worker-request".to_owned())
             .spawn(move || {
                 let mut stdin = stdin;
-                stdin.write_all(&input)?;
-                stdin.flush()
-            })
+                write_request(&mut stdin, &input)?;
+                let _ = wait_for_release.recv();
+                Ok(())
+            })?;
+        Ok(RequestWriter { handle, release })
+    }
+
+    fn finish_writer(writer: RequestWriter) -> Result<(), ParentFailure> {
+        let _ = writer.release.send(());
+        join_io(writer.handle)
+    }
+
+    fn write_request(mut output: impl Write, input: &[u8]) -> io::Result<()> {
+        output.write_all(&(input.len() as u64).to_be_bytes())?;
+        output.write_all(input)?;
+        output.flush()
     }
 
     fn spawn_reader(stdout: ChildStdout) -> io::Result<(IoThread<Vec<u8>>, Receiver<usize>)> {
@@ -695,7 +1535,8 @@ mod enabled {
         let response: WorkerResponse =
             serde_json::from_slice(bytes).map_err(|_| ParentFailure::Protocol)?;
         if response.protocol_version != PROTOCOL_VERSION
-            || response.address_space_limit_bytes != ADDRESS_SPACE_LIMIT_BYTES
+            || response.memory_limit_kind != memory_limit_kind()
+            || response.memory_limit_bytes != memory_limit_bytes()
         {
             return Err(ParentFailure::Protocol);
         }
@@ -737,6 +1578,79 @@ mod enabled {
         encoded
     }
 
+    const fn platform() -> &'static str {
+        if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "linux"
+        }
+    }
+
+    const fn memory_limit_kind() -> &'static str {
+        if cfg!(target_os = "linux") {
+            "rlimit_as_virtual_address_space"
+        } else {
+            "none"
+        }
+    }
+
+    const fn memory_limit_bytes() -> Option<u64> {
+        #[cfg(target_os = "linux")]
+        {
+            Some(LINUX_ADDRESS_SPACE_LIMIT_BYTES)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            None
+        }
+    }
+
+    const fn parent_liveness_mechanism() -> &'static str {
+        if cfg!(target_os = "macos") {
+            "framed_stdin_eof_with_kqueue_stage_status_and_direct_reap"
+        } else {
+            "not_evaluated"
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn physical_memory_bytes() -> io::Result<u64> {
+        let mut memory_bytes = 0_u64;
+        let mut length = std::mem::size_of::<u64>();
+        let result = unsafe {
+            libc::sysctlbyname(
+                c"hw.memsize".as_ptr(),
+                (&raw mut memory_bytes).cast(),
+                &raw mut length,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if result == 0 && length == std::mem::size_of::<u64>() {
+            Ok(memory_bytes)
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn system_command_output(program: &str, arguments: &[&str]) -> Result<String, String> {
+        let output = Command::new(program)
+            .args(arguments)
+            .output()
+            .map_err(|error| format!("failed to run {program}: {error}"))?;
+        if !output.status.success() {
+            return Err(format!("{program} exited unsuccessfully"));
+        }
+        let value = String::from_utf8(output.stdout)
+            .map_err(|_| format!("{program} output was not UTF-8"))?;
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(format!("{program} returned an empty value"));
+        }
+        Ok(value.to_owned())
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -758,6 +1672,16 @@ mod enabled {
         }
 
         #[test]
+        fn request_frame_carries_exact_length_and_bytes() {
+            let input = br#"{"@id":"https://example.test/s"}"#;
+            let mut encoded = Vec::new();
+            write_request(&mut encoded, input).expect("request should encode");
+
+            assert_eq!(&encoded[..8], &(input.len() as u64).to_be_bytes());
+            assert_eq!(&encoded[8..], input);
+        }
+
+        #[test]
         fn protocol_rejects_wrong_identity() {
             let mut response = WorkerResponse::control("success");
             response.protocol_version += 1;
@@ -765,7 +1689,7 @@ mod enabled {
             assert_eq!(decode_response(&encoded), Err(ParentFailure::Protocol));
 
             let mut response = WorkerResponse::control("success");
-            response.address_space_limit_bytes -= 1;
+            response.memory_limit_kind.push_str("-wrong");
             let encoded = serde_json::to_vec(&response).expect("response should serialize");
             assert_eq!(decode_response(&encoded), Err(ParentFailure::Protocol));
 
@@ -827,15 +1751,21 @@ mod enabled {
     }
 }
 
-#[cfg(all(cxf_json_semantic_harness, target_os = "linux"))]
+#[cfg(all(
+    cxf_json_semantic_harness,
+    any(target_os = "linux", target_os = "macos")
+))]
 fn main() -> std::process::ExitCode {
     enabled::main()
 }
 
-#[cfg(not(all(cxf_json_semantic_harness, target_os = "linux")))]
+#[cfg(not(all(
+    cxf_json_semantic_harness,
+    any(target_os = "linux", target_os = "macos")
+)))]
 fn main() -> std::process::ExitCode {
     eprintln!(
-        "the native worker-containment report requires Linux and CXF_JSON_SEMANTIC_HARNESS=1"
+        "the native worker-containment report requires Linux or macOS and CXF_JSON_SEMANTIC_HARNESS=1"
     );
     std::process::ExitCode::FAILURE
 }

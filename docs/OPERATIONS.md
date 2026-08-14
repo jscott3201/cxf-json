@@ -34,7 +34,7 @@ The GitHub CI workflow verifies:
 - all-feature and no-default Rust tests;
 - repository-owned benchmark corpus structure and resource-stress outcomes;
 - private production semantic aggregation;
-- native worker-containment mechanism evidence;
+- Linux and macOS worker-containment mechanism evidence;
 - WASM builds with and without the default semantic feature;
 - Node execution of internal WASM smoke workloads;
 - exact WASM dependency allowlists;
@@ -92,5 +92,6 @@ binding surfaces, wire formats, compatibility policy, or benchmark claims.
 
 [`ADR 0014`](../spec/adr/0014-native-worker-qualification.md) records the native
 qualification criteria for Linux, macOS, and Windows. No target currently satisfies
-those criteria. The Linux report remains mechanism evidence, and its limits are not
-package defaults.
+those criteria. The native report remains mechanism evidence, and its limits are not
+package defaults. macOS lifecycle evidence has no active hard memory policy and makes
+no descendant-containment claim.

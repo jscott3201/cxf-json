@@ -250,28 +250,55 @@ establish a performance change from the `3b56d18` end-to-end baseline. Stage and
 end-to-end values remain environment-specific compatibility evidence, not parser
 limits or release thresholds.
 
-### Linux Worker-Containment Evidence
+### Native Worker-Containment Evidence
 
 `report_native_worker_containment` re-executes one project instrumentation binary as
-one child at a time. The child applies a 256 MiB `RLIMIT_AS` before reading input or
-entering OxJSONLD. The parent admits at most 1 MiB, accepts at most 4 KiB of stdout,
-discards stderr, and kills and reaps the child after a one-second wall-clock
-deadline.
+one child at a time on Linux and macOS. The parent admits at most 1 MiB, accepts at
+most 4 KiB of stdout, discards stderr, and kills and reaps the child after a one-second
+monotonic deadline. Successful settlement includes response validation before the
+parent observes that deadline; this is not a real-time scheduling claim. A length-
+prefixed stdin request leaves the pipe open while the worker runs.
 
-The revision-bound CI report verifies the 32,768-value production workload, the
-repository remote-context failure, denial of a controlled 512 MiB address-space
-reservation, kill/reap after a controlled delay, response overflow, and rejection
-of an oversized request before spawn. The overflow case attempts one MiB of output
-and deliberately remains alive after the parent observes byte 4,097. The parent kills
-and reaps that child, then launches a semantic worker successfully. Worker replies
-contain a fixed outcome, source-match boolean, counters, and the configured
-address-space cap. They contain no source bytes, RDF values, ordered source tree, or
-backend diagnostic text.
+On Linux, the child applies a 256 MiB `RLIMIT_AS` before reading input or entering
+OxJSONLD. On macOS, the semantic workers have no active memory limit. A separate probe
+tries increasing finite `RLIMIT_AS` values and reports the first accepted virtual-
+address limit plus whether a mapping twice that size is denied. The report compares
+that limit with physical memory and remains unqualified; it does not substitute RSS or
+claim that a virtual-address limit above physical memory contains allocation.
+
+The Linux report verifies denial of a controlled 512 MiB address-space reservation.
+Both target reports verify the 32,768-value production workload, the repository remote-
+context failure, kill/reap after a controlled delay, response overflow, and rejection
+of an oversized request before spawn. The overflow case attempts one MiB of output and
+deliberately remains alive after the parent observes byte 4,097. The parent kills and
+reaps that child, then launches a semantic worker successfully. Worker replies contain
+a fixed outcome, source-match boolean, counters, and target memory-policy identity.
+They contain no source bytes, RDF values, ordered source tree, or backend diagnostic
+text.
+
+The macOS report retains the worker `Child` while an intermediate controller owns the
+only request-writer and response-reader descriptors. It kills that controller while the
+worker awaits its request header, runs a controlled long operation, and fills the held
+response pipe. Startup reads fail on EOF; after request framing, a watchdog exits with
+status 86 on EOF. Before registering `EVFILT_PROC`, the report verifies the worker PID,
+parent PID, and process start time. It checks that identity again after registration,
+observes `NOTE_EXIT`, requires failure status 1 before framing or watchdog status 86
+after framing, and reaps the worker through the retained handle. This tests one direct
+worker only. It does not establish descendant containment or a sandbox.
+
+A clean release run at revision `eb04a7b62534cd7abd7cdaedd6e290ef9827a819`
+on the primary arm64 development machine recorded macOS 26.6 build 25G70, Darwin
+25.6.0, and 16 GiB of physical memory. The first accepted finite `RLIMIT_AS` candidate
+was 512 GiB; a 1 TiB `PROT_NONE` mapping was denied. The 32,768-value semantic case,
+deadline cleanup, response overflow and recovery, and all three controller-death cases
+passed. This result leaves macOS memory qualification blocked because the observed
+finite limit is 32 times physical memory.
 
 `RLIMIT_AS` bounds virtual address space, not RSS. The constants belong to the
 evidence harness; they are not parser options, package defaults, or release
-thresholds. D-029 remains open because no supported native host boundary, bounded
-host-wide worker pool, macOS/Windows mechanism, or browser/Node Worker exists.
+thresholds. D-029 remains open because no supported native host boundary, hard macOS
+memory policy, descendant containment, bounded host-wide worker pool, Windows
+implementation, or browser/Node Worker exists.
 
 ## Reproduction
 
